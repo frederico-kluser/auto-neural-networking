@@ -1,0 +1,52 @@
+# Manifesto de downloads — PDFs do relatório de pesquisa
+# Colunas: secao<TAB>arquivo<TAB>url
+# Observação: URLs do arXiv usam /pdf/<id> (redirect para o PDF canônico).
+#
+# URLs efetivas usadas quando a URL original bloqueou download automatizado:
+#   A/evci-et-al-2022-gradmax-iclr-openreview.pdf .......... https://web.archive.org/web/2024id_/https://openreview.net/pdf?id=qjN4h_wwUO   (openreview.net devolve 403 p/ bots)
+#   A/fahlman-lebiere-1990-cascade-correlation-dtic-ada256635.pdf  https://web.archive.org/web/2020id_/https://apps.dtic.mil/sti/tr/pdf/ADA256635.pdf  (DTIC redireciona p/ página de manutenção)
+#   C/dacosta-et-al-2008-aos-dynamic-bandits-hal-inria-00278542.pdf  https://web.archive.org/web/2024id_/https://inria.hal.science/inria-00278542/document  (HAL anti-bot)
+#   C/fialho-et-al-2010-bandit-aos-amai-hal-inria-00519579.pdf  https://web.archive.org/web/2024id_/https://inria.hal.science/inria-00519579v1/file/banditAOS-AMAI10.pdf  (HAL anti-bot)
+#   C/hanna-blot-petke-2025-rl-mutation-operator-springer-ccby.pdf  https://rd.springer.com/content/pdf/10.1007/s10515-025-00501-z.pdf  (link.springer.com devolve challenge Fastly)
+A	stanley-miikkulainen-2002-neat-evolcomp.pdf	https://nn.cs.utexas.edu/downloads/papers/stanley.ec02.pdf
+A	stanley-miikkulainen-2002-efficient-evolution-topologies-cec.pdf	https://nn.cs.utexas.edu/downloads/papers/stanley.cec02.pdf
+A	stanley-miikkulainen-2002-efficient-rl-evolving-topologies-gecco.pdf	https://nn.cs.utexas.edu/downloads/papers/stanley.gecco02_1.pdf
+A	fahlman-lebiere-1990-cascade-correlation-nips2.pdf	https://proceedings.neurips.cc/paper_files/paper/1989/file/69adc1e107f7f7d035d7baf04342e1ca-Paper.pdf
+A	fahlman-lebiere-1990-cascade-correlation-cmu-cs-90-100.pdf	http://www.cs.cmu.edu/~eugene/refs/f-curves/Fahlman-lebiere-90.pdf
+A	fahlman-lebiere-1990-cascade-correlation-dtic-ada256635.pdf	https://apps.dtic.mil/sti/tr/pdf/ADA256635.pdf
+A	fahlman-1991-recurrent-cascade-correlation-nips3.pdf	https://papers.nips.cc/paper_files/paper/1990/file/fe73f687e5bc5280214e0486b273a5f9-Paper.pdf
+A	chen-goodfellow-shlens-2016-net2net-iclr-arxiv.pdf	https://arxiv.org/pdf/1511.05641
+A	evci-et-al-2022-gradmax-iclr-arxiv.pdf	https://arxiv.org/pdf/2201.05125
+A	evci-et-al-2022-gradmax-iclr-openreview.pdf	https://openreview.net/pdf?id=qjN4h_wwUO
+A	liu-wu-wang-2019-splitting-steepest-descent-arxiv.pdf	https://arxiv.org/pdf/1910.02366
+A	liu-wu-wang-2019-splitting-steepest-descent-neurips.pdf	https://proceedings.neurips.cc/paper_files/paper/2019/file/3a01fc0853ebeba94fde4d1cc6fb842a-Paper.pdf
+A	mitchell-et-al-2023-self-expanding-nn-arxiv.pdf	https://arxiv.org/pdf/2307.04526
+A	gaier-ha-2019-weight-agnostic-nn-neurips.pdf	https://proceedings.neurips.cc/paper_files/paper/2019/file/e98741479a7b998f88b8f8c9f0b6b6f1-Paper.pdf
+A	gaier-ha-2019-weight-agnostic-nn-arxiv.pdf	https://arxiv.org/pdf/1906.04358
+A	xie-et-al-2019-randomly-wired-nn-arxiv.pdf	https://arxiv.org/pdf/1904.01569
+A	xie-et-al-2019-randomly-wired-nn-iccv-cvf.pdf	https://openaccess.thecvf.com/content_ICCV_2019/papers/Xie_Exploring_Randomly_Wired_Neural_Networks_for_Image_Recognition_ICCV_2019_paper.pdf
+A	real-et-al-2019-regularized-evolution-aaai.pdf	https://ojs.aaai.org/index.php/AAAI/article/download/4405/4283
+A	real-et-al-2019-regularized-evolution-arxiv.pdf	https://arxiv.org/pdf/1802.01548
+A	wang-et-al-2024-tensorized-neat-gecco-arxiv.pdf	https://arxiv.org/pdf/2404.01817
+A	wang-et-al-2025-tensorneat-acm-telo-arxiv.pdf	https://arxiv.org/pdf/2504.08339
+A	douka-et-al-2025-growth-strategies-dag-arxiv.pdf	https://arxiv.org/pdf/2501.12690
+A	xie-2026-softmodel-arxiv.pdf	https://arxiv.org/pdf/2608.16409
+A	jia-zhou-2025-self-motivated-growing-nn-arxiv.pdf	https://arxiv.org/pdf/2512.12713
+B	jaeger-2001-echo-state-techrep148.pdf	https://www.ai.rug.nl/minds/uploads/EchoStatesTechRep.pdf
+B	lukosevicius-2012-practical-guide-esn.pdf	https://www.ai.rug.nl/minds/uploads/PracticalESN.pdf
+B	maass-et-al-2002-real-time-computing-lsm-tugraz.pdf	https://igi-web.tugraz.at/PDF/130.pdf
+B	hasani-et-al-2021-liquid-time-constant-arxiv.pdf	https://arxiv.org/pdf/2006.04439
+B	hasani-et-al-2021-liquid-time-constant-aaai.pdf	https://ojs.aaai.org/index.php/AAAI/article/download/16936/16743
+B	hasani-et-al-2022-cf-cnn-nature-nmi.pdf	https://www.nature.com/articles/s42256-022-00556-7.pdf
+B	hasani-et-al-2022-cf-cnn-arxiv.pdf	https://arxiv.org/pdf/2106.13898
+C	dacosta-et-al-2008-aos-dynamic-bandits-gecco-ubc.pdf	https://www.cs.ubc.ca/~hutter/EARG.shtml/earg/papers08/pap333s1-dacosta.pdf
+C	dacosta-et-al-2008-aos-dynamic-bandits-hal-inria-00278542.pdf	https://inria.hal.science/inria-00278542/document
+C	fialho-et-al-2008-extreme-value-aos-ppsn-mit.pdf	https://groups.csail.mit.edu/EVO-DesignOpt/pb/uploads/Site/rewardPPSN.pdf
+C	fialho-et-al-2010-bandit-aos-amai-hal-inria-00519579.pdf	https://inria.hal.science/inria-00519579v1/file/banditAOS-AMAI10.pdf
+C	whitacre-2009-adaptation-self-organization-thesis-arxiv.pdf	https://arxiv.org/pdf/0907.0516
+C	hanna-blot-petke-2025-rl-mutation-operator-arxiv.pdf	https://arxiv.org/pdf/2306.05792
+C	hanna-blot-petke-2025-rl-mutation-operator-springer-ccby.pdf	https://link.springer.com/content/pdf/10.1007/s10515-025-00501-z.pdf
+C	hanna-blot-petke-2025-rl-mutation-operator-ucl-discovery.pdf	https://discovery.ucl.ac.uk/id/eprint/10205221/1/Petke_s10515-025-00501-z.pdf
+D	prechelt-1998-early-stopping-but-when-stop-tricks.pdf	https://page.mi.fu-berlin.de/prechelt/Biblio/stop_tricks1997.pdf
+D	prechelt-1998-early-stopping-but-when-kitopen.pdf	https://publikationen.bibliothek.kit.edu/7498/1832
+D	prechelt-1998-automatic-early-stopping-cv-kitopen.pdf	https://publikationen.bibliothek.kit.edu/7398/1205

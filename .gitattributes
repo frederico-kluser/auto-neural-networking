@@ -1,0 +1,2 @@
+# PDFs são sempre binários (alguns PDFs sem compressão o git trata como texto)
+*.pdf binary

@@ -1,0 +1,368 @@
+{
+  "_doc": "Acervo do projeto auto-neural-networking (migrado da antiga memória global em 2026-09-26). Chaves e tags iguais às da ingestão original (acervo/auto-neural-networking/<ficheiro>#<segmento>) para a re-ingestão ser NO-OP. mode: markdown|text|whole|pdf · origin: owner|agent|untrusted|system · tags aceitam {stem} {name} {dir} {rule}. Ver references/acervo.md.",
+  "version": 1,
+  "key_prefix": "acervo",
+  "path_prefix": "auto-neural-networking",
+  "exclude": [],
+  "rules": [
+    {
+      "name": "relatorio",
+      "include": [
+        "README.md"
+      ],
+      "mode": "markdown",
+      "type": "semantic",
+      "origin": "agent",
+      "tags": "acervo,relatorio,auto-neural-networking"
+    },
+    {
+      "name": "docs-visao-geral",
+      "include": [
+        "docs/README.md"
+      ],
+      "mode": "markdown",
+      "type": "semantic",
+      "origin": "agent",
+      "tags": "acervo,docs,docs-visao-geral"
+    },
+    {
+      "name": "correcoes",
+      "include": [
+        "docs/correcoes-citacoes.md"
+      ],
+      "mode": "markdown",
+      "type": "semantic",
+      "origin": "agent",
+      "tags": "acervo,docs,correcoes"
+    },
+    {
+      "name": "ficha-a",
+      "include": [
+        "docs/A-neuroevolucao-e-crescimento-de-redes/README.md"
+      ],
+      "mode": "markdown",
+      "type": "semantic",
+      "origin": "agent",
+      "tags": "acervo,ficha,secao-a,neuroevolucao"
+    },
+    {
+      "name": "ficha-b",
+      "include": [
+        "docs/B-redes-recorrentes-reservatorio-e-dinamica/README.md"
+      ],
+      "mode": "markdown",
+      "type": "semantic",
+      "origin": "agent",
+      "tags": "acervo,ficha,secao-b,recorrentes,reservatorio"
+    },
+    {
+      "name": "ficha-c",
+      "include": [
+        "docs/C-selecao-adaptativa-de-operadores/README.md"
+      ],
+      "mode": "markdown",
+      "type": "semantic",
+      "origin": "agent",
+      "tags": "acervo,ficha,secao-c,operadores"
+    },
+    {
+      "name": "ficha-d",
+      "include": [
+        "docs/D-early-stopping/README.md"
+      ],
+      "mode": "markdown",
+      "type": "semantic",
+      "origin": "agent",
+      "tags": "acervo,ficha,secao-d,early-stopping"
+    },
+    {
+      "name": "ficha-e",
+      "include": [
+        "docs/E-referencias-tecnicas/README.md"
+      ],
+      "mode": "markdown",
+      "type": "semantic",
+      "origin": "agent",
+      "tags": "acervo,ficha,secao-e,referencias"
+    },
+    {
+      "name": "script",
+      "include": [
+        "scripts/baixar-pdfs.sh"
+      ],
+      "mode": "whole",
+      "type": "procedural",
+      "origin": "agent",
+      "tags": "acervo,script,download,pdfs"
+    },
+    {
+      "name": "manifest",
+      "include": [
+        "docs/manifest-downloads.tsv"
+      ],
+      "mode": "whole",
+      "type": "procedural",
+      "origin": "system",
+      "tags": "acervo,manifest,download,pdfs"
+    },
+    {
+      "name": "pdf-a",
+      "include": [
+        "docs/A-neuroevolucao-e-crescimento-de-redes/*.pdf"
+      ],
+      "mode": "pdf",
+      "type": "semantic",
+      "origin": "untrusted",
+      "tags": "acervo,pdf,secao-a,neuroevolucao,doc:{stem}"
+    },
+    {
+      "name": "pdf-b",
+      "include": [
+        "docs/B-redes-recorrentes-reservatorio-e-dinamica/*.pdf"
+      ],
+      "mode": "pdf",
+      "type": "semantic",
+      "origin": "untrusted",
+      "tags": "acervo,pdf,secao-b,recorrentes,reservatorio,doc:{stem}"
+    },
+    {
+      "name": "pdf-c",
+      "include": [
+        "docs/C-selecao-adaptativa-de-operadores/*.pdf"
+      ],
+      "mode": "pdf",
+      "type": "semantic",
+      "origin": "untrusted",
+      "tags": "acervo,pdf,secao-c,operadores,doc:{stem}"
+    },
+    {
+      "name": "pdf-d",
+      "include": [
+        "docs/D-early-stopping/*.pdf"
+      ],
+      "mode": "pdf",
+      "type": "semantic",
+      "origin": "untrusted",
+      "tags": "acervo,pdf,secao-d,early-stopping,doc:{stem}"
+    },
+    {
+      "name": "pdf-e",
+      "include": [
+        "docs/E-referencias-tecnicas/*.pdf"
+      ],
+      "mode": "pdf",
+      "type": "semantic",
+      "origin": "untrusted",
+      "tags": "acervo,pdf,secao-e,referencias,doc:{stem}"
+    }
+  ],
+  "graph": {
+    "entities": [
+      {
+        "name": "Neuroevolução e crescimento de redes",
+        "kind": "secao"
+      },
+      {
+        "name": "Redes recorrentes, reservatório e dinâmica",
+        "kind": "secao"
+      },
+      {
+        "name": "Seleção adaptativa de operadores",
+        "kind": "secao"
+      },
+      {
+        "name": "Early stopping",
+        "kind": "secao"
+      },
+      {
+        "name": "Referências técnicas",
+        "kind": "secao"
+      },
+      {
+        "name": "NEAT",
+        "kind": "tecnica"
+      },
+      {
+        "name": "Cascade-Correlation",
+        "kind": "conceito"
+      },
+      {
+        "name": "Net2Net",
+        "kind": "tecnica"
+      },
+      {
+        "name": "funcao",
+        "kind": "conceito"
+      },
+      {
+        "name": "GradMax",
+        "kind": "tecnica"
+      },
+      {
+        "name": "Echo State Networks",
+        "kind": "tecnica"
+      },
+      {
+        "name": "Prechelt early stopping",
+        "kind": "conceito"
+      },
+      {
+        "name": "Adaptive Pursuit",
+        "kind": "tecnica"
+      },
+      {
+        "name": "operadores de mutacao",
+        "kind": "conceito"
+      },
+      {
+        "name": "Probability Matching",
+        "kind": "tecnica"
+      },
+      {
+        "name": "treino",
+        "kind": "conceito"
+      },
+      {
+        "name": "TensorFlow.js",
+        "kind": "tecnologia"
+      },
+      {
+        "name": "auto-neural-networking",
+        "kind": "conceito"
+      },
+      {
+        "name": "WANN",
+        "kind": "tecnica"
+      },
+      {
+        "name": "topologia",
+        "kind": "conceito"
+      },
+      {
+        "name": "Self-Expanding Neural Networks",
+        "kind": "tecnica"
+      },
+      {
+        "name": "rede neural",
+        "kind": "conceito"
+      }
+    ],
+    "edges": [
+      [
+        "NEAT",
+        "estudado_em",
+        "Neuroevolução e crescimento de redes"
+      ],
+      [
+        "NEAT",
+        "cresce",
+        "Cascade-Correlation"
+      ],
+      [
+        "Cascade-Correlation",
+        "estudado_em",
+        "Neuroevolução e crescimento de redes"
+      ],
+      [
+        "Net2Net",
+        "estudado_em",
+        "Neuroevolução e crescimento de redes"
+      ],
+      [
+        "Net2Net",
+        "preserva",
+        "funcao"
+      ],
+      [
+        "GradMax",
+        "estudado_em",
+        "Neuroevolução e crescimento de redes"
+      ],
+      [
+        "GradMax",
+        "preserva",
+        "funcao"
+      ],
+      [
+        "Echo State Networks",
+        "estudado_em",
+        "Redes recorrentes, reservatório e dinâmica"
+      ],
+      [
+        "Echo State Networks",
+        "avaliado_por",
+        "Prechelt early stopping"
+      ],
+      [
+        "Adaptive Pursuit",
+        "estudado_em",
+        "Seleção adaptativa de operadores"
+      ],
+      [
+        "Adaptive Pursuit",
+        "seleciona",
+        "operadores de mutacao"
+      ],
+      [
+        "Probability Matching",
+        "estudado_em",
+        "Seleção adaptativa de operadores"
+      ],
+      [
+        "Probability Matching",
+        "seleciona",
+        "operadores de mutacao"
+      ],
+      [
+        "Prechelt early stopping",
+        "estudado_em",
+        "Early stopping"
+      ],
+      [
+        "Prechelt early stopping",
+        "para",
+        "treino"
+      ],
+      [
+        "TensorFlow.js",
+        "estudado_em",
+        "Referências técnicas"
+      ],
+      [
+        "TensorFlow.js",
+        "implementa",
+        "auto-neural-networking"
+      ],
+      [
+        "auto-neural-networking",
+        "estudado_em",
+        "Neuroevolução e crescimento de redes"
+      ],
+      [
+        "auto-neural-networking",
+        "usa",
+        "TensorFlow.js"
+      ],
+      [
+        "WANN",
+        "estudado_em",
+        "Neuroevolução e crescimento de redes"
+      ],
+      [
+        "WANN",
+        "avalia",
+        "topologia"
+      ],
+      [
+        "Self-Expanding Neural Networks",
+        "estudado_em",
+        "Neuroevolução e crescimento de redes"
+      ],
+      [
+        "Self-Expanding Neural Networks",
+        "cresce",
+        "rede neural"
+      ]
+    ]
+  }
+}

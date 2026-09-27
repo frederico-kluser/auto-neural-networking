@@ -1,0 +1,957 @@
+/* auto-neural-networking · demo · sistema de design
+   Tema escuro único e fechado. Instrumento científico: filetes de 1px, raio 4px,
+   mono para números/labels/códigos, sem sombras grandes, sem gradientes (salvo o
+   fundo subtil dos viewports 3D), sem cartões genéricos.
+   Tokens: bg #0B0B0D · superfície #121215 · borda #232329 · texto #E8E8EA ·
+   texto dim #9A9AA3 · acento âmbar #F5B04A (interativo/ativo/realce) ·
+   verde #3FB984 apenas para o estado saída/resolvido.
+   Regras de copy (demo/UX-REBUILD.md): ajuda curta em cada controlo (.hint),
+   vitória em verde semântico, limite em âmbar, sem cores novas. */
+
+:root {
+  color-scheme: dark;
+  --bg: #0B0B0D;
+  --surface: #121215;
+  --border: #232329;
+  --text: #E8E8EA;
+  --dim: #9A9AA3;
+  --accent: #F5B04A;
+  --ok: #3FB984;
+  --radius: 4px;
+  --sans: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, "JetBrains Mono", "IBM Plex Mono", monospace;
+  --t: 160ms ease;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 400 14px/1.45 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.num {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.micro-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+/* linha de ajuda curta: presente em TODO o controlo e em cada rótulo de estatística */
+.hint {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--dim);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------- estrutura */
+
+.app {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  gap: 1px;
+  background: var(--border);
+}
+
+/* ------------------------------------------------------------- barra topo */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 56px;
+  padding: 8px 20px;
+  background: var(--surface);
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+}
+
+.brand-name {
+  margin: 0;
+  font: 600 15px/1.1 var(--mono);
+  letter-spacing: 0.01em;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.brand-desc {
+  font-size: 12px;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  font: 500 11px/1 var(--mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dim);
+  transition: color var(--t), border-color var(--t), background-color var(--t);
+}
+
+.chip[data-state="paused"] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.chip[data-state="running"] {
+  color: var(--accent);
+  border-color: var(--accent);
+  animation: chip-pulse 1.8s ease-in-out infinite;
+}
+
+/* estado final de vitória: verde semântico (só para resolvido/saída) */
+.chip[data-state="solved"] {
+  color: var(--ok);
+  border-color: var(--ok);
+  background-color: rgba(63, 185, 132, 0.12);
+}
+
+@keyframes chip-pulse {
+  0%,
+  100% {
+    background-color: var(--bg);
+  }
+  50% {
+    background-color: rgba(245, 176, 74, 0.14);
+  }
+}
+
+.gen-slot {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.gen-value {
+  font: 600 18px/1 var(--mono);
+  color: var(--text);
+}
+
+/* ----------------------------------------------------- faixa de objetivo */
+
+/* largura total, entre o topo e o palco: objetivo fixo + progresso dinâmico */
+.goal {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 11px 20px;
+  background: var(--surface);
+  border-left: 3px solid var(--border);
+  transition: background-color var(--t), border-color var(--t);
+}
+
+.goal-objective {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--text);
+}
+
+.goal-progress {
+  margin: 0;
+  font: 500 12px/1.4 var(--mono);
+  letter-spacing: 0.01em;
+  font-variant-numeric: tabular-nums;
+  color: var(--dim);
+  transition: color var(--t);
+}
+
+.goal[data-state="progress"] .goal-progress {
+  color: var(--text);
+}
+
+/* vitória: fundo verde semântico ténue */
+.goal[data-state="solved"] {
+  background-color: rgba(63, 185, 132, 0.12);
+  border-left-color: var(--ok);
+}
+
+.goal[data-state="solved"] .goal-progress {
+  color: var(--ok);
+}
+
+/* limite de épocas sem vitória: tinta âmbar dentro do tema escuro */
+.goal[data-state="limit"] {
+  background-color: rgba(245, 176, 74, 0.08);
+  border-left-color: var(--accent);
+}
+
+.goal[data-state="limit"] .goal-progress {
+  color: var(--accent);
+}
+
+/* aviso curto (ex.: "desafio novo: a contar do zero") */
+.goal[data-notice="true"] .goal-progress {
+  color: var(--accent);
+}
+
+/* ---------------------------------------------------------------- painéis */
+
+.panel {
+  background: var(--surface);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.panel-title {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.panel-body {
+  padding: 12px 14px;
+  min-width: 0;
+}
+
+.panel-foot {
+  margin-top: auto;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.foot-note {
+  font: 500 10px/1.3 var(--mono);
+  letter-spacing: 0.03em;
+  color: var(--dim);
+}
+
+/* --------------------------------------------------------------- workspace */
+
+.workspace {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 1px;
+  background: var(--border);
+  min-height: 0;
+}
+
+/* ------------------------------------------------------- controlos (esq.) */
+
+.panel-body-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+input[type="number"],
+select {
+  width: 100%;
+  min-width: 0;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 7px 8px;
+  font: 500 12px/1.2 var(--mono);
+  transition: border-color var(--t), background-color var(--t);
+}
+
+input[type="number"]:hover,
+select:hover {
+  border-color: var(--dim);
+}
+
+input[type="number"]:focus-visible,
+select:focus-visible {
+  border-color: var(--accent);
+}
+
+/* caixa de verificação (mesmo sistema de raio 4px) */
+
+.check-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font: 500 11px/1.2 var(--mono);
+  letter-spacing: 0.03em;
+  color: var(--text);
+  cursor: pointer;
+  user-select: none;
+}
+
+input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  cursor: pointer;
+  transition: background-color var(--t), border-color var(--t);
+}
+
+input[type="checkbox"]:hover {
+  border-color: var(--dim);
+}
+
+input[type="checkbox"]:checked {
+  background-color: var(--accent);
+  border-color: var(--accent);
+  background-repeat: no-repeat;
+  background-position: center;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 6.4 L4.8 9.1 L10 3.3' fill='none' stroke='%230B0B0D' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+input[type="checkbox"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* segmentos (radios) */
+
+.segments {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.segments input[type="radio"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  margin: 0;
+}
+
+.segments label {
+  display: block;
+  text-align: center;
+  padding: 7px 4px;
+  background: var(--bg);
+  color: var(--dim);
+  font: 500 11px/1.2 var(--mono);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color var(--t), color var(--t);
+}
+
+.segments label:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+
+.segments input[type="radio"]:checked + label {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.segments input[type="radio"]:focus-visible + label {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+
+/* definições avançadas (recolhidas por defeito) */
+
+.advanced {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+
+.advanced > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  font: 500 11px/1.2 var(--mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dim);
+  cursor: pointer;
+  list-style: none;
+  transition: color var(--t), background-color var(--t);
+}
+
+.advanced > summary::-webkit-details-marker {
+  display: none;
+}
+
+.advanced > summary::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-left: 5px solid currentColor;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  transition: transform var(--t);
+}
+
+.advanced[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.advanced > summary:hover {
+  color: var(--text);
+  background: var(--surface);
+}
+
+.advanced > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.advanced-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 12px 10px 14px;
+  border-top: 1px solid var(--border);
+}
+
+/* botões: primário dominante + dois secundários lado a lado */
+
+.btn-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.btn-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.btn {
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font: 500 12px/1.2 var(--mono);
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  transition: background-color var(--t), border-color var(--t), color var(--t),
+    filter var(--t), transform var(--t), opacity var(--t);
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+  filter: brightness(0.92);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg);
+  filter: brightness(1.08);
+}
+
+.btn-primary:active:not(:disabled) {
+  filter: brightness(0.9);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+}
+
+/* ação primária: maior e com a largura total do painel */
+.btn-lead {
+  width: 100%;
+  padding: 14px 12px;
+  font-size: 14px;
+  letter-spacing: 0.04em;
+}
+
+/* ------------------------------------------------------------------- palco */
+
+.stage {
+  display: grid;
+  grid-template-columns: minmax(0, 62fr) minmax(0, 38fr);
+  gap: 1px;
+  background: var(--border);
+  min-height: 0;
+}
+
+.viz-col {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  min-width: 0;
+}
+
+.viz-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.viz-frame {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 320px;
+  margin: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background-color: var(--bg);
+  background-image: radial-gradient(
+    120% 100% at 50% 0%,
+    var(--surface) 0%,
+    var(--bg) 72%
+  );
+}
+
+.viz-frame > canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.viz-placeholder {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--dim);
+  font: 500 11px/1.4 var(--mono);
+  letter-spacing: 0.04em;
+  pointer-events: none;
+}
+
+/* legenda de cada vista (explica o que se está a ver) */
+.viz-legend {
+  margin: 0 12px 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--dim);
+}
+
+.state-tag {
+  font: 500 10px/1 var(--mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dim);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 3px 7px;
+  transition: color var(--t), border-color var(--t);
+}
+
+.state-tag[data-solved="true"] {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+/* --------------------------------------------------------- estatísticas */
+
+.stats {
+  background: var(--border);
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns:
+    minmax(240px, 1.1fr)
+    minmax(210px, 0.9fr)
+    minmax(280px, 1.15fr)
+    minmax(330px, 1.4fr);
+  gap: 1px;
+}
+
+.panel-body-chart {
+  flex: 1;
+  display: flex;
+}
+
+#spark-fitness {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 88px;
+  background-color: var(--bg);
+  background-image: linear-gradient(
+    to top,
+    var(--border) 0 1px,
+    transparent 1px 100%
+  );
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.legend {
+  display: flex;
+  gap: 12px;
+}
+
+.legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 500 10px/1 var(--mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.swatch {
+  display: inline-block;
+  width: 12px;
+  height: 2px;
+}
+
+.swatch-accent {
+  background: var(--accent);
+}
+
+.swatch-dim {
+  background: var(--dim);
+}
+
+/* contadores: rótulo com ajuda curta + valor */
+
+.counters {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.counter-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.counter-row:last-child {
+  border-bottom: 0;
+}
+
+.counter-term {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.counter-val {
+  margin: 0;
+  font: 600 13px/1.2 var(--mono);
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* barras de dados (preenchimento de acento sobre pista #232329) */
+
+.bar {
+  position: relative;
+  display: block;
+  height: 10px;
+  background: var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.bar-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+}
+
+.bar-val {
+  font: 500 11px/1.2 var(--mono);
+  color: var(--text);
+  text-align: right;
+}
+
+.bar-count {
+  font: 500 11px/1.2 var(--mono);
+  color: var(--dim);
+  text-align: right;
+}
+
+/* mutações em ensaio */
+
+.op-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.op-row {
+  display: grid;
+  grid-template-columns: 8.6em minmax(40px, 1fr) 3.8em 2.8em;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 0;
+}
+
+.op-head {
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 3px;
+}
+
+.op-head .micro-label:nth-child(3),
+.op-head .micro-label:nth-child(4) {
+  text-align: right;
+}
+
+.op-name {
+  font: 500 11px/1.2 var(--mono);
+  color: var(--text);
+}
+
+/* o que a rede vê: sinais agrupados + saída da rede */
+
+.readouts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.readout {
+  min-width: 0;
+}
+
+.readout-title {
+  margin: 0 0 8px;
+}
+
+/* grupos dos 12 sinais: paredes (0..3) · saída visível (4..7) · onde já esteve (8..11) */
+.sensor-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 0;
+}
+
+.sensor-group + .sensor-group {
+  margin-top: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.group-caption {
+  margin: 0 0 4px;
+  font: 500 10px/1.2 var(--mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.meter-row {
+  display: grid;
+  grid-template-columns: 5.8em minmax(16px, 1fr) 3.4em;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.meter-label {
+  font: 500 11px/1.2 var(--mono);
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+/* ------------------------------------------------------------------ rodapé */
+/* Classes sem regra própria (âncoras de layout/integração):
+   .stat-panel .viz-col-neural .viz-col-maze .chip-label */
+
+.footer {
+  background: var(--bg);
+  padding: 12px 20px;
+}
+
+.footer p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dim);
+}
+
+/* ------------------------------------------------------------ responsivo */
+
+@media (max-width: 1240px) {
+  .stats-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 1024px) {
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .panel-controls {
+    order: 2;
+  }
+
+  .stage {
+    order: 1;
+  }
+}
+
+@media (max-width: 900px) {
+  .stage {
+    grid-template-columns: 1fr;
+  }
+
+  .viz-frame {
+    min-height: 260px;
+    aspect-ratio: 16 / 10;
+  }
+}
+
+@media (max-width: 640px) {
+  .topbar {
+    flex-wrap: wrap;
+    padding: 10px 16px;
+  }
+
+  .goal {
+    padding: 10px 16px;
+  }
+
+  .stats-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .readouts {
+    grid-template-columns: 1fr;
+  }
+
+  .op-row {
+    grid-template-columns: 7.6em minmax(30px, 1fr) 3.6em 2.6em;
+    gap: 8px;
+  }
+}
+
+/* ------------------------------------------------- acessibilidade / movimento */
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .chip[data-state="running"] {
+    animation: none;
+    background-color: rgba(245, 176, 74, 0.1);
+  }
+
+  .advanced > summary::before {
+    transition: none;
+  }
+}

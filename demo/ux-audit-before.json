@@ -1,0 +1,85 @@
+{
+  "interface_type": "dashboard",
+  "interface_type_note": "Ferramenta técnica com painel de controlo + visualização ao vivo (dominante: dashboard operacional)",
+  "overall_score": 28,
+  "band": "poor",
+  "findings": [
+    {
+      "id": "finding-1",
+      "principle": { "code": "F.1.1.02", "slug": "cognitive-load", "title": "Cognitive Load", "part": "part-1" },
+      "severity": "critical",
+      "message": "Cinco parâmetros técnicos expostos sem qualquer explicação (labirinto, seed, população, gerações, velocidade, modo de visualização). O utilizador não sabe o que nenhum faz nem qual importa; a carga cognitiva antes da ação principal impede a tarefa.",
+      "remediation": "Uma única ação primária ('Treinar') dominante; parâmetros avançados (seed, população, limite) recolhidos num bloco 'definições avançadas' fechado; cada controlo visível ganha uma linha de ajuda em linguagem comum.",
+      "business_impact": null
+    },
+    {
+      "id": "finding-2",
+      "principle": { "code": "F.1.1.03", "slug": "mental-model", "title": "Mental Model", "part": "part-1" },
+      "severity": "critical",
+      "message": "O modelo mental do utilizador é 'clico em Treinar e vejo a rede evoluir até vencer'. O que acontece é 'corre um pouco e pára' (limite de gerações escondido) e o desafio nunca termina visivelmente pela interface. A promessa da ferramenta não corresponde ao comportamento.",
+      "remediation": "Treinar corre até VENCER (limite de épocas opcional, 0 = até vencer); o objetivo ('levar o agente à saída') é visível no topo; quando vence, o estado 'RESOLVIDO' é celebrado e a solução é reproduzida no labirinto.",
+      "business_impact": null
+    },
+    {
+      "id": "finding-3",
+      "principle": { "code": "C.1.4.01", "slug": "error-prevention", "title": "Error Prevention", "part": "part-2" },
+      "severity": "critical",
+      "message": "Quando uma corrida termina não há feedback do motivo (limite atingido? resolvido? pausado?). O utilizador interpreta a paragem como falha ('não funciona') e não sabe qual o próximo passo.",
+      "remediation": "Toda a terminação indica a razão em texto claro: 'RESOLVIDO em N épocas', 'limite de épocas atingido - aumente o limite ou o tamanho do labirinto', 'pausado por si'.",
+      "business_impact": null
+    },
+    {
+      "id": "finding-4",
+      "principle": { "code": "D.1.1.01", "slug": "progressive-disclosure", "title": "Progressive Disclosure", "part": "part-3" },
+      "severity": "warning",
+      "message": "Configuração avançada (seed, população) tem o mesmo peso visual que os controlos essenciais; nada é revelado progressivamente.",
+      "remediation": "Revelar progressivamente: essenciais à vista (tamanho do desafio, velocidade), avançados num bloco recolhido.",
+      "business_impact": null
+    },
+    {
+      "id": "finding-5",
+      "principle": { "code": "S.1.3.01", "slug": "ai-transparency", "title": "AI Transparency", "part": "part-5" },
+      "severity": "warning",
+      "message": "A memória da rede (onde o agente já esteve) não é visível em lado nenhum; o utilizador conclui 'ele não tem memória'. O que a rede sabe é invisível.",
+      "remediation": "Tornar a memória visível: células percorridas marcadas no labirinto, leituras dos sensores de 'visitado' rotuladas, e texto que explica que a rede recebe apenas distâncias, sinal de saída e memória do percurso.",
+      "business_impact": null
+    },
+    {
+      "id": "finding-6",
+      "principle": { "code": "F.2.2.03", "slug": "hicks-law", "title": "Hick's Law", "part": "part-1" },
+      "severity": "warning",
+      "message": "Onze controlos com igual peso antes da ação principal (tamanho, seed, população, gerações, 4 velocidades, 2 modos, 3 botões); o tempo de decisão empurra o utilizador para a paralisia ou para o clique errado.",
+      "remediation": "Reduzir para 3 decisões visíveis (tamanho, velocidade, Treinar/Pausar/Recomeçar); tudo o resto recolhido. Labels de velocidade em linguagem de efeito, não de multiplicador.",
+      "business_impact": null
+    },
+    {
+      "id": "finding-7",
+      "principle": { "code": "D.2.1.02", "slug": "visual-hierarchy", "title": "Visual Hierarchy", "part": "part-3" },
+      "severity": "suggestion",
+      "message": "O botão 'Treinar' não domina a hierarquia; parece um botão igual aos restantes e a progressão (épocas, resolvidos) está dispersa em contadores pequenos sem narrativa.",
+      "remediation": "Botão primário maior com ação única clara; faixa de progresso com a narrativa 'época N · resolvidos X/Y · melhor fitness Z' junto do objetivo.",
+      "business_impact": null
+    },
+    {
+      "id": "finding-8",
+      "principle": { "code": "F.1.1.04", "slug": "millers-law", "title": "Miller's Law", "part": "part-1" },
+      "severity": "suggestion",
+      "message": "Sem qualquer orientação inicial: o ecrã não diz o que a ferramenta faz nem o que fazer primeiro.",
+      "remediation": "Linha de objetivo persistente + estado vazio orientador ('clica em Treinar e observa a rede evoluir até vencer').",
+      "business_impact": null
+    }
+  ],
+  "strengths": [
+    {
+      "principle": { "code": "C.1.1.01", "slug": "consistency-standards", "title": "Consistency and Standards" },
+      "message": "Linguagem visual consistente e instrumento coerente (tokens, mono para números, um acento)."
+    },
+    {
+      "principle": { "code": "I.2.2.02", "slug": "fitts-law", "title": "Fitts's Law" },
+      "message": "Alvos de interação confortáveis e leituras ao vivo próximas da visualização que lhes dá contexto."
+    }
+  ],
+  "priority_fixes": ["finding-2", "finding-3", "finding-1", "finding-5", "finding-6", "finding-4", "finding-7", "finding-8"],
+  "api_enriched": false,
+  "api_note": "Install the uxuiprinciples API key for enriched findings with citations and business impact data. See uxuiprinciples.com/en/checkout"
+}

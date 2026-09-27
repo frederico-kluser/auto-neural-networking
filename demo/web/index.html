@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<!--
+  auto-neural-networking · demo · shell estático (HTML/CSS + store em src/state.js)
+  Contrato de UX: demo/UX-REBUILD.md · Contrato de integração: demo/CONTRACTS.md
+  IDs DOM estáveis expostos para integração (preencher via JS; entrada em src/main.js):
+
+  Barra superior
+    #status-chip            (data-state = idle | running | paused | solved; texto em #status-chip-label)
+    #status-chip-label      textos: parado | a treinar | em pausa | resolvido
+                            ("resolvido" quando o store tem solved=true; tem prioridade sobre os
+                            restantes estados)
+    #topbar-generation-value  contador "época N" ("-" sem dados)
+
+  Faixa de objetivo (NOVA; UX-REBUILD §2; entre o topo e o palco, largura total)
+    #goal-banner            (data-state = intro | progress | solved | limit; data-notice = false | true)
+    #goal-objective         texto fixo do objetivo (não é preenchido por JS)
+    #goal-progress          linha dinâmica: intro ("clica em Treinar e observa a rede evoluir até
+                            vencer") · progresso ("época N · resolvidos X/Y · melhor resultado Z") ·
+                            vitória ("desafio vencido em N épocas") · limite (mensagem de limite) ·
+                            aviso curto "desafio novo: a contar do zero" (evento 'ann-goal-notice'
+                            disparado por ui/controls.js, consumido por ui/stats.js)
+
+  Palco (containers vazios; a visualização cria o canvas lá dentro e remove o .viz-placeholder)
+    #stage                  contentor do palco
+    #viz-neural  + #viz-neural-placeholder  + legenda #legend-neural
+    #viz-maze    + #viz-maze-placeholder    + legenda #legend-maze
+    #episode-solved         (data-solved = false | true; texto: por resolver | resolvido)
+
+  Controlos (ordem canónica: botões, tamanho do desafio, velocidade, definições avançadas)
+    #btn-train              primário, largura total: "Treinar" (ou "Retomar" quando em pausa)
+    #btn-pause  #btn-reset  secundários, lado a lado: "Pausar" · "Recomeçar"
+    #ctrl-maze-size         select 5..31 (ímpares), opções rotuladas com dificuldade, defeito 7×7
+    #hint-maze-size         ajuda do #ctrl-maze-size (aria-describedby)
+    #speed-label            rótulo do grupo de velocidade
+    #ctrl-speed             radiogroup: #speed-1 #speed-4 #speed-16 #speed-max (values 1 | 4 | 16 | max)
+                            etiquetas lenta / normal / rápida / máxima; defeito RÁPIDA (16)
+    #hint-speed             ajuda do grupo de velocidade (aria-describedby)
+    #advanced-settings      <details> "definições avançadas", fechado por defeito:
+      #ctrl-seed              input numérico, etiqueta "labirinto nº" (NUNCA "seed")
+      #hint-seed              ajuda do #ctrl-seed
+      #ctrl-population        input numérico, etiqueta "redes em competição" (NUNCA "população")
+      #hint-population        ajuda do #ctrl-population
+      #ctrl-generations       input numérico, etiqueta "limite de épocas", defeito 0, min 0
+                              (0 = treinar até vencer; n > 0 = teto opcional)
+      #ctrl-generations-hint  ajuda do #ctrl-generations (aria-describedby)
+      #ctrl-auto-rotate       checkbox "rotação automática da câmara", DESLIGADA por defeito
+                              (store key autoRotate; liga as vistas 3D)
+      #hint-auto-rotate       ajuda do #ctrl-auto-rotate
+      #ctrl-memory-mode       select "memória da rede" (EMENDA v5/E13): opções
+                              sinapses (defeito) | mapa | ambos; store key memoryMode
+      #hint-memory-mode       ajuda do #ctrl-memory-mode (aria-describedby)
+    REMOVIDO (UX-REBUILD): o controlo "modo de visualização" e os ids
+      #ctrl-view-mode #mode-champion #mode-live #mode-label. A chave do store
+      viewMode mantém-se com valor 'live' por compatibilidade.
+
+  Estatísticas (rótulos em linguagem comum; cada um com linha de ajuda)
+    #stats                  faixa de estatísticas
+    #fitness-title          "evolução" + ajuda #hint-evolution + legenda melhor / média
+    #spark-fitness          canvas (sparkline melhor/média; dimensionar com DPR em JS)
+    #counters-title         título do painel de contadores
+    #stat-generation  #stat-fitness-best  #stat-fitness-mean  #stat-solved  #stat-neurons  #stat-conns
+      #stat-solved          contador "resolvidos": texto "${solvedCount}/${mazeCount}" a partir das
+                            chaves solvedCount/mazeCount do store ("-" sem dados)
+    #ops-title              "mutações em ensaio" + ajuda #hint-ops
+    #op-list                lista de mutações; cada linha tem fill (barra), pct e count:
+      #op-addNeuron-fill   #op-addNeuron-pct   #op-addNeuron-count
+      #op-addConn-fill     #op-addConn-pct     #op-addConn-count
+      #op-removeConn-fill  #op-removeConn-pct  #op-removeConn-count
+      #op-rewire-fill      #op-rewire-pct      #op-rewire-count
+      #op-pruneNeuron-fill #op-pruneNeuron-pct #op-pruneNeuron-count
+      #op-changeLeak-fill  #op-changeLeak-pct  #op-changeLeak-count
+      #op-splitNeuron-fill #op-splitNeuron-pct #op-splitNeuron-count
+      #op-perturbWeights-fill #op-perturbWeights-pct #op-perturbWeights-count
+    #readouts-title         "o que a rede vê" + ajuda #hint-readouts
+    Sensores na ordem de SENSOR_NAMES (12; grupos: paredes 0..3 · saída visível 4..7 ·
+    onde já esteve 8..11):
+      #sensor-fill-0 #sensor-val-0   (parede cima)
+      #sensor-fill-1 #sensor-val-1   (parede baixo)
+      #sensor-fill-2 #sensor-val-2   (parede esq.)
+      #sensor-fill-3 #sensor-val-3   (parede direita)
+      #sensor-fill-4 #sensor-val-4   (saída cima)
+      #sensor-fill-5 #sensor-val-5   (saída baixo)
+      #sensor-fill-6 #sensor-val-6   (saída esq.)
+      #sensor-fill-7 #sensor-val-7   (saída direita)
+      #sensor-fill-8 #sensor-val-8   (visitado cima)
+      #sensor-fill-9 #sensor-val-9   (visitado baixo)
+      #sensor-fill-10 #sensor-val-10 (visitado esq.)
+      #sensor-fill-11 #sensor-val-11 (visitado dir.)
+    Saída da rede na ordem canónica de DIRS (cima, baixo, esquerda, direita):
+      #output-fill-0 #output-val-0   (cima)
+      #output-fill-1 #output-val-1   (baixo)
+      #output-fill-2 #output-val-2   (esquerda)
+      #output-fill-3 #output-val-3   (direita)
+
+  Treinos guardados (NOVO, EMENDA v5/E14; faixa a largura total entre o palco e
+  as estatísticas; persistência em web/src/training-store.js, chave localStorage
+  ann.trainings.v1; linhas da lista renderizadas por ui/stats.js e ligações de
+  eventos feitas por ui/controls.js):
+    #panel-saved            faixa do painel "treinos guardados"
+    #saved-title            título do painel
+    #saved-count            contagem ("N guardados" / "1 guardado")
+    #training-name          input de texto: nome do treino a guardar (editável;
+                            valor por defeito "7×7 · labirinto 3 · 2,71" e
+                            atualizado enquanto o utilizador não escreve)
+    #btn-save-training      "guardar treino atual"
+    #hint-save-training     ajuda do nome + guardar (aria-describedby)
+    #saved-list             <ul> dos treinos guardados. Cada linha (criada por
+                            ui/stats.js a partir de store.savedTrainings) tem:
+                              li.saved-row[data-id][data-comparing="a|b|false"]
+                                       [data-playable="true|false"]
+                                span.saved-name   nome do treino
+                                span.saved-meta   meta linha tipo
+                                                  "7×7 · labirinto 3 · resultado
+                                                  2,71 · 12 out 2026"
+                                span.saved-tag    "treino A"/"treino B" quando
+                                                  em comparação (data-tag a|b)
+                                botões button[data-action="play"|"compare"|"delete"]
+                                       com data-id = id do registo
+                                span.saved-reason motivo inline quando o treino
+                                                  não pode jogar neste labirinto
+    #saved-empty            estado vazio (sem treinos guardados)
+    #saved-status           notas inline (role=status; ui/controls.js)
+    #hint-saved             ajuda do painel (ações jogar/comparar/apagar)
+
+  Estrutura (âncoras de layout/aria; não precisam de preenchimento):
+    #panel-controls  #controls-title  #stage  #stats  #panel-saved
+    #fitness-title  #counters-title  #ops-title  #readouts-title
+    #legend-neural  #legend-maze  #goal-objective
+    #hint-evolution  #hint-ops  #hint-readouts
+
+  Barras: preencher com style.width em % (0..100). Valores: preencher textContent.
+  Números visíveis: vírgula decimal (pt-PT), feitos em ui/stats.js.
+-->
+<html lang="pt-PT">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>auto-neural-networking · rede que evolui em labirintos</title>
+<link rel="stylesheet" href="./styles.css">
+<style>
+  /* E14 "treinos guardados": estilos próprios deste painel (só classes novas;
+     styles.css não é alterado). Mesmo sistema do instrumento: filetes de 1px,
+     raio 4px, mono para números/labels, sem sombras grandes. A cor azul-pálida
+     #8FB8DA é a do agente B da reprodução dupla (CONTRACTS E14). */
+  .saved-body {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    align-items: flex-start;
+  }
+  .saved-save {
+    flex: 1 1 260px;
+    max-width: 400px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 0;
+  }
+  .saved-list-col {
+    flex: 3 1 380px;
+    min-width: 0;
+  }
+  .saved-name-input {
+    width: 100%;
+    min-width: 0;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 7px 8px;
+    font: 500 12px/1.2 var(--mono);
+    transition: border-color var(--t);
+  }
+  .saved-name-input:hover {
+    border-color: var(--dim);
+  }
+  .saved-name-input:focus-visible {
+    border-color: var(--accent);
+  }
+  .saved-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .saved-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px;
+    background: var(--surface);
+    box-shadow: inset 2px 0 0 transparent;
+  }
+  .saved-row[data-comparing="a"] {
+    box-shadow: inset 2px 0 0 var(--accent);
+  }
+  .saved-row[data-comparing="b"] {
+    box-shadow: inset 2px 0 0 #8FB8DA;
+  }
+  .saved-main {
+    flex: 1 1 220px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .saved-name {
+    font: 500 12px/1.3 var(--mono);
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+  .saved-meta {
+    font: 500 10px/1.3 var(--mono);
+    letter-spacing: 0.03em;
+    color: var(--dim);
+    overflow-wrap: anywhere;
+  }
+  .saved-tag {
+    font: 500 10px/1 var(--mono);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    border: 1px solid currentColor;
+    border-radius: var(--radius);
+    padding: 3px 6px;
+  }
+  .saved-tag[data-tag="a"] {
+    color: var(--accent);
+  }
+  .saved-tag[data-tag="b"] {
+    color: #8FB8DA;
+  }
+  .saved-actions {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .saved-actions .btn {
+    padding: 4px 8px;
+    font-size: 11px;
+  }
+  .saved-reason {
+    flex: 1 1 100%;
+    margin: 0;
+    color: var(--accent);
+  }
+  .saved-empty {
+    margin: 0;
+  }
+  .saved-status {
+    font: 500 11px/1.3 var(--mono);
+    color: var(--accent);
+  }
+  .saved-status:empty {
+    display: none;
+  }
+  .saved-count {
+    white-space: nowrap;
+  }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.js"
+  }
+}
+</script>
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <h1 class="brand-name">auto-neural-networking</h1>
+      <span class="brand-desc">rede que evolui em labirintos</span>
+    </div>
+    <div class="topbar-right">
+      <div class="chip" id="status-chip" data-state="idle" role="status" aria-live="polite">
+        <span class="chip-label" id="status-chip-label">parado</span>
+      </div>
+      <div class="gen-slot">
+        <span class="micro-label">época</span>
+        <span class="gen-value num" id="topbar-generation-value">-</span>
+      </div>
+    </div>
+  </header>
+
+  <section class="goal" id="goal-banner" data-state="intro" data-notice="false"
+           aria-label="objetivo e progresso do treino">
+    <p class="goal-objective" id="goal-objective">objetivo: treinar a rede até o agente chegar à saída</p>
+    <p class="goal-progress" id="goal-progress">clica em Treinar e observa a rede evoluir até vencer</p>
+  </section>
+
+  <main class="workspace">
+
+    <section class="panel panel-controls" id="panel-controls" aria-labelledby="controls-title">
+      <div class="panel-head">
+        <h2 class="panel-title" id="controls-title">controlo de treino</h2>
+      </div>
+      <div class="panel-body panel-body-controls">
+
+        <div class="btn-stack">
+          <button type="button" class="btn btn-primary btn-lead" id="btn-train">Treinar</button>
+          <div class="btn-row btn-row-secondary">
+            <button type="button" class="btn" id="btn-pause" disabled>Pausar</button>
+            <button type="button" class="btn" id="btn-reset">Recomeçar</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label class="micro-label" for="ctrl-maze-size">tamanho do desafio</label>
+          <select id="ctrl-maze-size" name="maze-size" aria-describedby="hint-maze-size">
+            <option value="5">5×5 fácil</option>
+            <option value="7" selected>7×7 normal</option>
+            <option value="9">9×9 difícil</option>
+            <option value="11">11×11 muito difícil</option>
+            <option value="13">13×13 muito difícil</option>
+            <option value="15">15×15 muito difícil</option>
+            <option value="17">17×17 muito difícil</option>
+            <option value="19">19×19 muito difícil</option>
+            <option value="21">21×21 extremo</option>
+            <option value="23">23×23 extremo</option>
+            <option value="25">25×25 extremo</option>
+            <option value="27">27×27 extremo</option>
+            <option value="29">29×29 extremo</option>
+            <option value="31">31×31 extremo</option>
+          </select>
+          <span class="hint" id="hint-maze-size">labirintos maiores são mais difíceis e o treino demora mais a vencer</span>
+        </div>
+
+        <div class="field">
+          <span class="micro-label" id="speed-label">velocidade do treino</span>
+          <div class="segments" id="ctrl-speed" role="radiogroup" aria-labelledby="speed-label" aria-describedby="hint-speed">
+            <input type="radio" name="speed" id="speed-1" value="1">
+            <label for="speed-1">lenta</label>
+            <input type="radio" name="speed" id="speed-4" value="4">
+            <label for="speed-4">normal</label>
+            <input type="radio" name="speed" id="speed-16" value="16" checked>
+            <label for="speed-16">rápida</label>
+            <input type="radio" name="speed" id="speed-max" value="max">
+            <label for="speed-max">máxima</label>
+          </div>
+          <span class="hint" id="hint-speed">quão depressa o treino corre. Não muda o resultado, só o tempo</span>
+        </div>
+
+        <details class="advanced" id="advanced-settings">
+          <summary>definições avançadas</summary>
+          <div class="advanced-body">
+
+            <div class="field">
+              <label class="micro-label" for="ctrl-seed">labirinto nº</label>
+              <input class="num" type="number" id="ctrl-seed" name="seed" min="0" max="2147483647" step="1" value="1" inputmode="numeric" aria-describedby="hint-seed">
+              <span class="hint" id="hint-seed">cada número gera um labirinto diferente</span>
+            </div>
+
+            <div class="field">
+              <label class="micro-label" for="ctrl-population">redes em competição</label>
+              <input class="num" type="number" id="ctrl-population" name="population" min="2" max="10000" step="1" value="60" inputmode="numeric" aria-describedby="hint-population">
+              <span class="hint" id="hint-population">quantas redes são treinadas de cada vez. Mais redes = mais diversidade, treino mais lento</span>
+            </div>
+
+            <div class="field">
+              <label class="micro-label" for="ctrl-generations">limite de épocas</label>
+              <input class="num" type="number" id="ctrl-generations" name="generations" min="0" max="100000" step="1" value="0" inputmode="numeric" aria-describedby="ctrl-generations-hint">
+              <span class="hint" id="ctrl-generations-hint">0 = treinar até vencer. Coloque um número para limitar o tempo de treino</span>
+            </div>
+
+            <div class="field">
+              <label class="micro-label" for="ctrl-memory-mode">memória da rede</label>
+              <select id="ctrl-memory-mode" name="memory-mode" aria-describedby="hint-memory-mode">
+                <option value="sinapses" selected>sinapses (memória na rede)</option>
+                <option value="mapa">mapa do labirinto (entradas)</option>
+                <option value="ambos">ambos</option>
+              </select>
+              <span class="hint" id="hint-memory-mode">com 'sinapses' a rede aprende memória nos próprios neurónios e joga em labirintos de qualquer tamanho; com 'mapa' cada casa é uma entrada (só labirintos do mesmo tamanho)</span>
+            </div>
+
+            <div class="field field-check">
+              <label class="check-label" for="ctrl-auto-rotate">
+                <input type="checkbox" id="ctrl-auto-rotate" name="auto-rotate" aria-describedby="hint-auto-rotate">
+                rotação automática da câmara
+              </label>
+              <span class="hint" id="hint-auto-rotate">anima a câmara das vistas 3D</span>
+            </div>
+
+          </div>
+        </details>
+
+      </div>
+    </section>
+
+    <section class="stage" id="stage" aria-label="Visualização 3D">
+      <div class="viz-col viz-col-neural">
+        <div class="viz-head">
+          <h2 class="panel-title">rede neuronal</h2>
+          <span class="micro-label">vista 3D</span>
+        </div>
+        <div class="viz-frame" id="viz-neural">
+          <span class="viz-placeholder" id="viz-neural-placeholder">a carregar visualização 3D...</span>
+        </div>
+        <p class="viz-legend" id="legend-neural">os pulsos são os sinais a circular pelas ligações.</p>
+      </div>
+      <div class="viz-col viz-col-maze">
+        <div class="viz-head">
+          <h2 class="panel-title">labirinto</h2>
+          <span class="state-tag" id="episode-solved" data-solved="false">por resolver</span>
+        </div>
+        <div class="viz-frame" id="viz-maze">
+          <span class="viz-placeholder" id="viz-maze-placeholder">a carregar visualização 3D...</span>
+        </div>
+        <p class="viz-legend" id="legend-maze">percurso feito a âmbar · saída a verde · raios = o que o agente deteta.</p>
+      </div>
+    </section>
+
+  </main>
+
+  <section class="panel" id="panel-saved" aria-labelledby="saved-title">
+    <div class="panel-head">
+      <h2 class="panel-title" id="saved-title">treinos guardados</h2>
+      <span class="micro-label saved-count" id="saved-count">0 guardados</span>
+    </div>
+    <div class="panel-body saved-body">
+      <div class="saved-save">
+        <div class="field">
+          <label class="micro-label" for="training-name">nome do treino</label>
+          <input class="saved-name-input" type="text" id="training-name" name="training-name"
+                 maxlength="60" spellcheck="false" autocomplete="off"
+                 value="7×7 · labirinto 1 · 0,00" aria-describedby="hint-save-training">
+        </div>
+        <button type="button" class="btn btn-primary" id="btn-save-training"
+                aria-describedby="hint-save-training">guardar treino atual</button>
+        <span class="hint" id="hint-save-training">dá um nome ao treino e guarda a rede que está treinada agora, para a poder jogar noutro labirinto mais tarde</span>
+      </div>
+      <div class="saved-list-col">
+        <ul class="saved-list" id="saved-list" aria-label="treinos guardados"></ul>
+        <p class="saved-empty hint" id="saved-empty">ainda não há treinos guardados. Treine a rede e clique em guardar treino atual.</p>
+      </div>
+    </div>
+    <div class="panel-foot">
+      <span class="hint" id="hint-saved">jogar reproduz o treino neste labirinto · comparar junta até dois treinos e mostra-os a jogar ao mesmo tempo · apagar remove o treino do computador</span>
+      <span class="saved-status" id="saved-status" role="status" aria-live="polite"></span>
+    </div>
+  </section>
+
+  <section class="stats" id="stats" aria-label="Estatísticas">
+    <div class="stats-grid">
+
+      <section class="panel stat-panel" aria-labelledby="fitness-title" aria-describedby="hint-evolution">
+        <div class="panel-head">
+          <h2 class="panel-title" id="fitness-title">evolução</h2>
+          <div class="legend">
+            <span class="legend-item"><span class="swatch swatch-accent"></span>melhor</span>
+            <span class="legend-item"><span class="swatch swatch-dim"></span>média</span>
+          </div>
+        </div>
+        <div class="panel-body panel-body-chart">
+          <canvas id="spark-fitness" aria-label="Evolução do melhor resultado e da média, época a época"></canvas>
+        </div>
+        <div class="panel-foot">
+          <span class="hint" id="hint-evolution">subir = a rede está a melhorar de época em época</span>
+          <span class="foot-note">uma amostra por época · melhor e médio de todas as redes</span>
+        </div>
+      </section>
+
+      <section class="panel stat-panel" aria-labelledby="counters-title">
+        <div class="panel-head">
+          <h2 class="panel-title" id="counters-title">contadores</h2>
+        </div>
+        <div class="panel-body">
+          <dl class="counters">
+            <div class="counter-row">
+              <dt class="counter-term">
+                <span class="micro-label">época</span>
+                <span class="hint">cada época é uma ronda de treino com todas as redes</span>
+              </dt>
+              <dd class="num counter-val" id="stat-generation">-</dd>
+            </div>
+            <div class="counter-row">
+              <dt class="counter-term">
+                <span class="micro-label">melhor resultado</span>
+                <span class="hint">0 a 3,0; vencer começa em 1,2</span>
+              </dt>
+              <dd class="num counter-val" id="stat-fitness-best">-</dd>
+            </div>
+            <div class="counter-row">
+              <dt class="counter-term">
+                <span class="micro-label">resultado médio</span>
+                <span class="hint">média de todas as redes</span>
+              </dt>
+              <dd class="num counter-val" id="stat-fitness-mean">-</dd>
+            </div>
+            <div class="counter-row">
+              <dt class="counter-term">
+                <span class="micro-label">resolvidos</span>
+                <span class="hint">labirintos de treino já resolvidos pelo campeão</span>
+              </dt>
+              <dd class="num counter-val" id="stat-solved">-</dd>
+            </div>
+            <div class="counter-row">
+              <dt class="counter-term">
+                <span class="micro-label">neurónios</span>
+                <span class="hint">crescem sozinhos quando são precisos</span>
+              </dt>
+              <dd class="num counter-val" id="stat-neurons">-</dd>
+            </div>
+            <div class="counter-row">
+              <dt class="counter-term">
+                <span class="micro-label">conexões</span>
+                <span class="hint">ligações entre os neurónios da rede</span>
+              </dt>
+              <dd class="num counter-val" id="stat-conns">-</dd>
+            </div>
+          </dl>
+        </div>
+        <div class="panel-foot"><span class="foot-note">valores da rede em exibição</span></div>
+      </section>
+
+      <section class="panel stat-panel" aria-labelledby="ops-title" aria-describedby="hint-ops">
+        <div class="panel-head">
+          <h2 class="panel-title" id="ops-title">mutações em ensaio</h2>
+          <span class="micro-label">8 mutações</span>
+        </div>
+        <div class="panel-body">
+          <ul class="op-list" id="op-list">
+            <li class="op-row op-head">
+              <span class="micro-label">mutação</span>
+              <span class="micro-label">probabilidade</span>
+              <span class="micro-label">p</span>
+              <span class="micro-label">usos</span>
+            </li>
+            <li class="op-row">
+              <span class="op-name">addNeuron</span>
+              <span class="bar"><span class="bar-fill" id="op-addNeuron-fill"></span></span>
+              <span class="num bar-val" id="op-addNeuron-pct">0,0%</span>
+              <span class="num bar-count" id="op-addNeuron-count">0</span>
+            </li>
+            <li class="op-row">
+              <span class="op-name">addConn</span>
+              <span class="bar"><span class="bar-fill" id="op-addConn-fill"></span></span>
+              <span class="num bar-val" id="op-addConn-pct">0,0%</span>
+              <span class="num bar-count" id="op-addConn-count">0</span>
+            </li>
+            <li class="op-row">
+              <span class="op-name">removeConn</span>
+              <span class="bar"><span class="bar-fill" id="op-removeConn-fill"></span></span>
+              <span class="num bar-val" id="op-removeConn-pct">0,0%</span>
+              <span class="num bar-count" id="op-removeConn-count">0</span>
+            </li>
+            <li class="op-row">
+              <span class="op-name">rewire</span>
+              <span class="bar"><span class="bar-fill" id="op-rewire-fill"></span></span>
+              <span class="num bar-val" id="op-rewire-pct">0,0%</span>
+              <span class="num bar-count" id="op-rewire-count">0</span>
+            </li>
+            <li class="op-row">
+              <span class="op-name">pruneNeuron</span>
+              <span class="bar"><span class="bar-fill" id="op-pruneNeuron-fill"></span></span>
+              <span class="num bar-val" id="op-pruneNeuron-pct">0,0%</span>
+              <span class="num bar-count" id="op-pruneNeuron-count">0</span>
+            </li>
+            <li class="op-row">
+              <span class="op-name">changeLeak</span>
+              <span class="bar"><span class="bar-fill" id="op-changeLeak-fill"></span></span>
+              <span class="num bar-val" id="op-changeLeak-pct">0,0%</span>
+              <span class="num bar-count" id="op-changeLeak-count">0</span>
+            </li>
+            <li class="op-row">
+              <span class="op-name">splitNeuron</span>
+              <span class="bar"><span class="bar-fill" id="op-splitNeuron-fill"></span></span>
+              <span class="num bar-val" id="op-splitNeuron-pct">0,0%</span>
+              <span class="num bar-count" id="op-splitNeuron-count">0</span>
+            </li>
+            <li class="op-row">
+              <span class="op-name">perturbWeights</span>
+              <span class="bar"><span class="bar-fill" id="op-perturbWeights-fill"></span></span>
+              <span class="num bar-val" id="op-perturbWeights-pct">0,0%</span>
+              <span class="num bar-count" id="op-perturbWeights-count">0</span>
+            </li>
+          </ul>
+        </div>
+        <div class="panel-foot">
+          <span class="hint" id="hint-ops">a rede tenta mutações e fica com as que funcionam</span>
+          <span class="foot-note">as probabilidades sobem quando a mutação melhora o resultado</span>
+        </div>
+      </section>
+
+      <section class="panel stat-panel" aria-labelledby="readouts-title" aria-describedby="hint-readouts">
+        <div class="panel-head">
+          <h2 class="panel-title" id="readouts-title">o que a rede vê</h2>
+          <span class="micro-label">12 sinais + mapa do labirinto · 4 saídas</span>
+        </div>
+        <div class="panel-body readouts">
+          <div class="readout">
+            <h3 class="micro-label readout-title">os 12 sinais</h3>
+            <div class="sensor-group">
+              <p class="group-caption">paredes</p>
+              <div class="meter-row">
+                <span class="meter-label">parede cima</span>
+                <span class="bar"><span class="bar-fill" id="sensor-fill-0"></span></span>
+                <span class="num bar-val" id="sensor-val-0">0,00</span>
+              </div>
+              <div class="meter-row">
+                <span class="meter-label">parede baixo</span>
+                <span class="bar"><span class="bar-fill" id="sensor-fill-1"></span></span>
+                <span class="num bar-val" id="sensor-val-1">0,00</span>
+              </div>
+              <div class="meter-row">
+                <span class="meter-label">parede esq.</span>
+                <span class="bar"><span class="bar-fill" id="sensor-fill-2"></span></span>
+                <span class="num bar-val" id="sensor-val-2">0,00</span>
+              </div>
+              <div class="meter-row">
+                <span class="meter-label">parede direita</span>
+                <span class="bar"><span class="bar-fill" id="sensor-fill-3"></span></span>
+                <span class="num bar-val" id="sensor-val-3">0,00</span>
+              </div>
+            </div>
+            <div class="sensor-group">
+              <p class="group-caption">saída visível</p>
+              <div class="meter-row">
+                <span class="meter-label">saída cima</span>
+                <span class="bar"><span class="bar-fill" id="sensor-fill-4"></span></span>
+                <span class="num bar-val" id="sensor-val-4">0,00</span>
+              </div>
+              <div class="meter-row">
+                <span class="meter-label">saída baixo</span>
+                <span class="bar"><span class="bar-fill" id="sensor-fill-5"></span></span>
+                <span class="num bar-val" id="sensor-val-5">0,00</span>
+              </div>
+              <div class="meter-row">
+                <span class="meter-label">saída esq.</span>
+                <span class="bar"><span class="bar-fill" id="sensor-fill-6"></span></span>
+                <span class="num bar-val" id="sensor-val-6">0,00</span>
+              </div>
+              <div class="meter-row">
+                <span class="meter-label">saída direita</span>
+                <span class="bar"><span class="bar-fill" id="sensor-fill-7"></span></span>
+                <span class="num bar-val" id="sensor-val-7">0,00</span>
+              </div>
+            </div>
+            <div class="sensor-group">
+              <p class="group-caption">onde já esteve</p>
+              <div class="meter-row">
+                <span class="meter-label">visitado cima</span>
+                <span class="bar"><span class="bar-fill" id="sensor-fill-8"></span></span>
+                <span class="num bar-val" id="sensor-val-8">0,00</span>
+              </div>
+              <div class="meter-row">
+                <span class="meter-label">visitado baixo</span>
+                <span class="bar"><span class="bar-fill" id="sensor-fill-9"></span></span>
+                <span class="num bar-val" id="sensor-val-9">0,00</span>
+              </div>
+              <div class="meter-row">
+                <span class="meter-label">visitado esq.</span>
+                <span class="bar"><span class="bar-fill" id="sensor-fill-10"></span></span>
+                <span class="num bar-val" id="sensor-val-10">0,00</span>
+              </div>
+              <div class="meter-row">
+                <span class="meter-label">visitado dir.</span>
+                <span class="bar"><span class="bar-fill" id="sensor-fill-11"></span></span>
+                <span class="num bar-val" id="sensor-val-11">0,00</span>
+              </div>
+            </div>
+          </div>
+          <div class="readout">
+            <h3 class="micro-label readout-title">saída da rede</h3>
+            <div class="meter-row">
+              <span class="meter-label">cima</span>
+              <span class="bar"><span class="bar-fill" id="output-fill-0"></span></span>
+              <span class="num bar-val" id="output-val-0">+0,00</span>
+            </div>
+            <div class="meter-row">
+              <span class="meter-label">baixo</span>
+              <span class="bar"><span class="bar-fill" id="output-fill-1"></span></span>
+              <span class="num bar-val" id="output-val-1">+0,00</span>
+            </div>
+            <div class="meter-row">
+              <span class="meter-label">esquerda</span>
+              <span class="bar"><span class="bar-fill" id="output-fill-2"></span></span>
+              <span class="num bar-val" id="output-val-2">+0,00</span>
+            </div>
+            <div class="meter-row">
+              <span class="meter-label">direita</span>
+              <span class="bar"><span class="bar-fill" id="output-fill-3"></span></span>
+              <span class="num bar-val" id="output-val-3">+0,00</span>
+            </div>
+          </div>
+        </div>
+        <div class="panel-foot">
+          <span class="hint" id="hint-readouts">12 sinais: distâncias às paredes, saída visível e onde já esteve. Mais o mapa do labirinto: cada casa acende quando visitada (o ponto forte é a posição atual), para a rede perceber que está em loop</span>
+          <span class="foot-note">os sinais vão de 0 a 1 · a saída mais alta decide a direção do passo</span>
+        </div>
+      </section>
+
+    </div>
+  </section>
+
+  <footer class="footer">
+    <p>O agente vê apenas 12 sinais: distâncias às paredes (4), saída visível (4) e onde já esteve (4). Não recebe coordenadas nem mapa do labirinto.</p>
+  </footer>
+
+</div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

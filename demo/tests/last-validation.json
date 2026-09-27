@@ -1,0 +1,152 @@
+{
+  "when": "2026-09-27T00:16:55.612Z",
+  "passed": 28,
+  "total": 28,
+  "failures": 0,
+  "perf": {
+    "ticksPerSec": 193200,
+    "episodesPerSec": 2217
+  },
+  "results": [
+    {
+      "name": "maze 5x5: fronteira fechada, start/exit abertos, solucionável",
+      "ok": true,
+      "detail": "caminho 5 células"
+    },
+    {
+      "name": "maze 7x7: fronteira fechada, start/exit abertos, solucionável",
+      "ok": true,
+      "detail": "caminho 9 células"
+    },
+    {
+      "name": "maze 9x9: fronteira fechada, start/exit abertos, solucionável",
+      "ok": true,
+      "detail": "caminho 21 células"
+    },
+    {
+      "name": "maze 11x11: fronteira fechada, start/exit abertos, solucionável",
+      "ok": true,
+      "detail": "caminho 25 células"
+    },
+    {
+      "name": "maze 15x15: fronteira fechada, start/exit abertos, solucionável",
+      "ok": true,
+      "detail": "caminho 45 células"
+    },
+    {
+      "name": "maze 21x21: fronteira fechada, start/exit abertos, solucionável",
+      "ok": true,
+      "detail": "caminho 61 células"
+    },
+    {
+      "name": "maze 31x31: fronteira fechada, start/exit abertos, solucionável",
+      "ok": true,
+      "detail": "caminho 117 células"
+    },
+    {
+      "name": "maze: determinismo por seed e variação entre seeds",
+      "ok": true,
+      "detail": "ok"
+    },
+    {
+      "name": "maze: propriedade de labirinto perfeito (árvore)",
+      "ok": true,
+      "detail": "97 células, 96 arestas"
+    },
+    {
+      "name": "maze: tamanhos não ímpares/pequenos são clampados",
+      "ok": true,
+      "detail": "7x5"
+    },
+    {
+      "name": "rayInfo: dist 0 com parede adjacente, contagem correta em corredor",
+      "ok": true,
+      "detail": "ok"
+    },
+    {
+      "name": "rayInfo: exitVisible só com linha de visão desimpedida na direção",
+      "ok": true,
+      "detail": "ok"
+    },
+    {
+      "name": "sense(): normalização e sinais de saída exatos",
+      "ok": true,
+      "detail": "ok"
+    },
+    {
+      "name": "sense(): fração de visitados por direção (memória de onde já esteve)",
+      "ok": true,
+      "detail": "ok"
+    },
+    {
+      "name": "sense(): mapa do labirinto como entradas (0 / 0,5 / 1,0)",
+      "ok": true,
+      "detail": "ok"
+    },
+    {
+      "name": "rede: determinismo e invariantes",
+      "ok": true,
+      "detail": "neurónios=1 conexões=0"
+    },
+    {
+      "name": "rede: addConn com peso 0 preserva a função",
+      "ok": true,
+      "detail": "ok"
+    },
+    {
+      "name": "rede: capacidade cresce sozinha ao chegar ao limite (addNeuron + ensureCapacity)",
+      "ok": true,
+      "detail": "[object Promise]"
+    },
+    {
+      "name": "rede: spectralThermostat limita ρ̂ ao alvo",
+      "ok": true,
+      "detail": "ρ̂ 7.166 → 0.950"
+    },
+    {
+      "name": "ops: 400 operações aleatórias preservam invariantes e o caminho I/O",
+      "ok": true,
+      "detail": "398/400 aplicadas"
+    },
+    {
+      "name": "ops: banco adaptativo mantém P_min e probabilidades somam 1",
+      "ok": true,
+      "detail": "ok"
+    },
+    {
+      "name": "fitnessOf: fórmula canónica (spot-checks)",
+      "ok": true,
+      "detail": "ok"
+    },
+    {
+      "name": "runEpisode: determinismo, terminação e sensorTrace",
+      "ok": true,
+      "detail": "solved=false steps=60 fitness=-0.405"
+    },
+    {
+      "name": "solvedCount: conta labirintos resolvidos (critério de paragem)",
+      "ok": true,
+      "detail": "[object Promise]"
+    },
+    {
+      "name": "evolução: aprende em 5x5 (resolve e a média da população sobe)",
+      "ok": true,
+      "detail": "best 2.777→2.777 · mean -0.149→2.269"
+    },
+    {
+      "name": "evolução: melhora o melhor em 7x7 (tarefa mais dura, sem saturar)",
+      "ok": true,
+      "detail": "best 0.833→0.833 · mean -0.584→0.651"
+    },
+    {
+      "name": "performance: ≥ 20 000 ticks de rede/segundo em Node",
+      "ok": true,
+      "detail": "193200 ticks/s"
+    },
+    {
+      "name": "performance: ≥ 50 episódios/segundo em labirinto 5x5",
+      "ok": true,
+      "detail": "2217 episódios/s"
+    }
+  ]
+}

@@ -3,7 +3,8 @@
 import assert from 'node:assert/strict';
 import { makeRng } from '../core/rng.mjs';
 import { generateMaze, solveMaze, rayInfo, DIRS, DIR_VEC } from '../core/maze.mjs';
-import { sense, EXIT_SIGNAL, SENSOR_NAMES } from '../core/sensors.mjs';
+import { sense, senseInto, EXIT_SIGNAL, SENSOR_NAMES } from '../core/sensors.mjs';
+import { distanceField } from '../core/evolution.mjs'; // E15 (helper do motor; testado aqui)
 
 let pass = 0;
 let fail = 0;
@@ -480,6 +481,121 @@ check('sense E13: withMap devolve estados 0 / 0,5 / 1,0 exatos por célula', () 
     assert.equal(s2[i], 0, 'célula ' + i + ' devia ser 0');
   }
   assert.equal(s2[12 + 2 * 9 + 4], 1.0);
+});
+
+// ── EMENDA v6/E15: distanceField — BFS até ao exit, paredes bloqueiam ─────────
+// Grelha 5x5 à mão com exit em (3,1). O caminho de Manhattan ((1,1)→(3,1) = 2) está
+// BLOQUEADO pela coluna x=2: o BFS dá a volta por baixo ⇒ dist((1,1)) = 6.
+//   #####
+//   #.#.#
+//   #.#.#
+//   #...#
+//   #####
+const bfsGrid = gridMaze(5, 5, ['#####', '#.#.#', '#.#.#', '#...#', '#####'], { x: 3, y: 1 });
+check('distanceField: exato em grelha à mão (paredes bloqueiam; BFS ≠ Manhattan)', () => {
+  const d = distanceField(bfsGrid);
+  assert.ok(d instanceof Int32Array);
+  assert.equal(d.length, 5 * 5);
+  assert.equal(d[bfsGrid.idx(3, 1)], 0, 'exit = 0');
+  assert.equal(d[bfsGrid.idx(3, 2)], 1);
+  assert.equal(d[bfsGrid.idx(3, 3)], 2);
+  assert.equal(d[bfsGrid.idx(2, 3)], 3);
+  assert.equal(d[bfsGrid.idx(1, 3)], 4);
+  assert.equal(d[bfsGrid.idx(1, 2)], 5);
+  assert.equal(d[bfsGrid.idx(1, 1)], 6, 'BFS dá a volta: 6, não Manhattan=2');
+  assert.ok(d[bfsGrid.idx(1, 1)] > 2, 'as paredes têm de bloquear o caminho direto');
+  // paredes todas a -1
+  for (let y = 0; y < 5; y++) {
+    for (let x = 0; x < 5; x++) {
+      if (bfsGrid.isWall(x, y)) assert.equal(d[bfsGrid.idx(x, y)], -1, `parede (${x},${y}) devia ser -1`);
+    }
+  }
+});
+check('distanceField: células abertas inalcançáveis ficam a -1', () => {
+  // Duas colunas desconectadas; exit em (3,2). (1,·) fica inalcançável.
+  //   #####
+  //   #.#.#
+  //   #.#.#
+  //   #####
+  const g = gridMaze(5, 4, ['#####', '#.#.#', '#.#.#', '#####'], { x: 3, y: 2 });
+  const d = distanceField(g);
+  assert.equal(d[g.idx(3, 2)], 0);
+  assert.equal(d[g.idx(3, 1)], 1);
+  assert.equal(d[g.idx(1, 1)], -1, 'região isolada aberta tem de ficar a -1');
+  assert.equal(d[g.idx(1, 2)], -1);
+});
+check('distanceField: em labirintos reais dist(start) === len(solveMaze) − 1 (5..31)', () => {
+  for (const n of ODD_SIZES) {
+    const m = generateMaze(n, n, 2);
+    const d = distanceField(m);
+    const path = solveMaze(m);
+    assert.equal(d[m.idx(m.exit.x, m.exit.y)], 0);
+    assert.equal(d[m.idx(m.start.x, m.start.y)], path.length - 1, `BFS ≠ caminho em ${n}`);
+    // consistência: cada célula do caminho desce exatamente 1 em cada passo
+    for (let i = 1; i < path.length; i++) {
+      const a = d[m.idx(path[i - 1].x, path[i - 1].y)];
+      const b = d[m.idx(path[i].x, path[i].y)];
+      assert.equal(a - b, 1, `degrau errado em ${n} (${i})`);
+    }
+  }
+});
+
+// ── EMENDA v6/E18: senseInto — igual a sense, sem alocação (mesmo `out`) ──────
+check('senseInto: igual a sense em todos os modos (com/sem visited, com/sem withMap)', () => {
+  const v = new Uint8Array(9 * 5);
+  v[1 * 9 + 4] = 1;
+  v[2 * 9 + 3] = 1;
+  const cases = [
+    [openGrid, 4, 2, v, {}],
+    [openGrid, 1, 1, v, {}],
+    [openGrid, 4, 2, null, {}],
+    [openGrid, 4, 2, v, { withMap: true }],
+    [openGrid, 4, 2, null, { withMap: true }],
+    [rayGrid, 5, 1, null, {}],
+    [rayGrid, 5, 1, v, { withMap: true }],
+  ];
+  for (const [m, x, y, vis, o] of cases) {
+    const want = sense(m, x, y, vis, o);
+    const out = new Float32Array(want.length);
+    const got = senseInto(out, m, x, y, vis, o);
+    assert.equal(got, out, 'senseInto tem de devolver o MESMO buffer');
+    assert.deepEqual(Array.from(got), Array.from(want), `divergência em (${x},${y}) ${JSON.stringify(o)}`);
+  }
+});
+check('senseInto: sem alocação — o mesmo `out` é mutado no local e devolvido', () => {
+  const out = new Float32Array(12);
+  const r1 = senseInto(out, openGrid, 4, 2, null);
+  assert.equal(r1, out, 'referência tem de ser o mesmo objeto');
+  const first = Array.from(out);
+  const r2 = senseInto(out, openGrid, 1, 1, null); // posição diferente, MESMO buffer
+  assert.equal(r2, out);
+  assert.notDeepEqual(Array.from(out), first, 'conteúdo tem de ser sobrescrito no local');
+  // chamadas repetidas não crescem nada: identidade estável
+  for (let t = 0; t < 5; t++) assert.equal(senseInto(out, openGrid, 4, 2, null), out);
+  assert.deepEqual(Array.from(out), Array.from(sense(openGrid, 4, 2, null)), 'reutilização alterou o resultado');
+});
+check('senseInto: buffer reutilizado com withMap reescreve o mapa todo (0 / 0,5 / 1,0)', () => {
+  const n = 12 + 9 * 5;
+  const out = new Float32Array(n).fill(7); // lixo prévio em TODO o buffer
+  const v = new Uint8Array(9 * 5);
+  v[2 * 9 + 3] = 1;
+  senseInto(out, openGrid, 4, 2, v, { withMap: true });
+  assert.deepEqual(Array.from(out), Array.from(sense(openGrid, 4, 2, v, { withMap: true })));
+  // sem visited no MESMO buffer: o mapa tem de ficar todo a 0 exceto a posição atual
+  senseInto(out, openGrid, 4, 2, null, { withMap: true });
+  for (let i = 12; i < n; i++) {
+    if (i === 12 + 2 * 9 + 4) continue;
+    assert.equal(out[i], 0, 'célula ' + i + ' devia ser reescrita a 0');
+  }
+  assert.equal(out[12 + 2 * 9 + 4], 1.0);
+  assert.deepEqual(Array.from(out), Array.from(sense(openGrid, 4, 2, null, { withMap: true })));
+});
+check('senseInto: buffer curto lança RangeError; excedente não é tocado', () => {
+  assert.throws(() => senseInto(new Float32Array(11), openGrid, 4, 2, null), RangeError);
+  assert.throws(() => senseInto(new Float32Array(12), openGrid, 4, 2, null, { withMap: true }), RangeError);
+  const big = new Float32Array(20).fill(9);
+  senseInto(big, openGrid, 4, 2, null);
+  assert.equal(big[12], 9, 'entradas além de 12 não podem ser tocadas sem withMap');
 });
 
 // ── fim ───────────────────────────────────────────────────────────────────────

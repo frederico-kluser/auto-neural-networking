@@ -5,10 +5,15 @@ import assert from 'node:assert/strict';
 import {
   makeNetwork, resetNet, step, cloneNet, countNeurons, countConns,
   spectralRadius, spectralThermostat, ensureCapacity, MAX_SLOTS,
+  invalidateMaskCache,
 } from '../core/network.mjs';
 import { OP_NAMES, applyOp, makeOperatorBank } from '../core/ops.mjs';
-import { STEP_TICKS, fitnessOf, runEpisode, evaluate, evolve, solvedCount } from '../core/evolution.mjs';
-import { generateMaze } from '../core/maze.mjs';
+import {
+  STEP_TICKS, fitnessOf, runEpisode, evaluate, evolve, solvedCount,
+  distanceField, memoryHorizonFor, curriculumMazes,
+  revisitCharge, pickDir, quantSig, // OPÇÃO B
+} from '../core/evolution.mjs';
+import { generateMaze, solveMaze, DIR_VEC } from '../core/maze.mjs';
 import { sense } from '../core/sensors.mjs';
 
 // ---------------------------------------------------------------------------
@@ -78,6 +83,12 @@ function checkInvariants(net, tag = '') {
     for (let i = 0; i < net.nOut; i++) if (net.M_out[j * net.nOut + i]) path = true;
   }
   if (!path) throw new Error(`sem caminho input→output ${tag}`);
+}
+
+// v7: unidade de DECISÃO = neurónio que alimenta o readout (alguma M_out[j][i] === 1).
+function isDecisionNetUnit(net, j) {
+  for (let i = 0; i < net.nOut; i++) if (net.M_out[j * net.nOut + i]) return true;
+  return false;
 }
 
 function snapshot(net) {
@@ -479,13 +490,63 @@ check('STEP_TICKS === 3', () => {
   assert.equal(STEP_TICKS, 3);
 });
 
-check('fitnessOf: spot-checks da fórmula canónica', () => {
+check('E15: fitnessOf — fórmula canónica BFS (spot-checks EXATOS)', () => {
+  // ramo resolvido: INALTERADO (guarda lexicográfica não interfere: 2.657 > 1.25)
   const solved = fitnessOf({ solved: true, steps: 10, maxSteps: 50, startDist: 4, endDist: 0, visited: 5, openCells: 7 });
-  assert.ok(Math.abs(solved - (1.5 + (1 - 10 / 50) + 0.5 * (5 / 7))) < 1e-12);
+  assert.equal(solved, 1.5 + (1 - 10 / 50) + 0.5 * (5 / 7));
+  // ramo não resolvido: 2*(startDist − endDist)/startDist − steps*0.002 + 0.25*(visited/openCells)
+  // OPÇÃO B/guarda: o valor bruto (1.6586) excede o UNSOLVED_CAP ⇒ clamp a 1.2
+  // (assertão legitimamente alterada pela fórmula nova — guarda lexicográfica 07-2.5).
+  const unsolvedRaw = 2 * (4 - 1) / 4 - 10 * 0.002 + 0.25 * (5 / 7);
+  assert.ok(unsolvedRaw > 1.2, 'pré-condição: valor bruto acima do cap');
   const unsolved = fitnessOf({ solved: false, steps: 10, maxSteps: 50, startDist: 4, endDist: 1, visited: 5, openCells: 7 });
-  assert.ok(Math.abs(unsolved - ((1 - 1 / 4) * 1.0 - 10 * 0.002 + 0.25 * (5 / 7))) < 1e-12);
+  assert.equal(unsolved, 1.2);
   const stuck = fitnessOf({ solved: false, steps: 0, maxSteps: 100, startDist: 4, endDist: 4, visited: 1, openCells: 7 });
-  assert.ok(Math.abs(stuck - ((1 - 4 / 4) * 1.0 - 0 * 0.002 + 0.25 * (1 / 7))) < 1e-12);
+  assert.equal(stuck, 2 * (4 - 4) / 4 - 0 * 0.002 + 0.25 * (1 / 7));
+  // distâncias BFS profundas (nunca Manhattan): potencial 2×(progresso)
+  // OPÇÃO B/guarda: valor bruto 1.5025 > 1.2 ⇒ clamp (assertão legitimamente alterada).
+  const deepRaw = 2 * (40 - 10) / 40 - 30 * 0.002 + 0.25 * (20 / 80);
+  assert.ok(deepRaw > 1.2, 'pré-condição: valor bruto acima do cap');
+  const deep = fitnessOf({ solved: false, steps: 30, maxSteps: 100, startDist: 40, endDist: 10, visited: 20, openCells: 80 });
+  assert.equal(deep, 1.2);
+  // guarda E15: startDist = 0 ⇒ termo de progresso 0 (sem divisão por zero)
+  const deg = fitnessOf({ solved: false, steps: 5, maxSteps: 10, startDist: 0, endDist: 3, visited: 2, openCells: 4 });
+  assert.equal(deg, 0 - 5 * 0.002 + 0.25 * (2 / 4));
+  assert.ok(Number.isFinite(deg));
+  // valores BAIXOS continuam exatos (clamp não interfere)
+  const low = fitnessOf({ solved: false, steps: 10, maxSteps: 50, startDist: 8, endDist: 4, visited: 12, openCells: 40 });
+  assert.equal(low, 2 * (8 - 4) / 8 - 10 * 0.002 + 0.25 * (12 / 40));
+});
+
+check('OPÇÃO B: fitnessOf — bónus de novidade substitui cobertura + guarda lexicográfica', () => {
+  // com `bonus` FINITO: SUBSTITUI o termo linear (0.5/0.25·visited/openCells) nos DOIS
+  // ramos (escolha documentada: "same bonus in both branches").
+  const s1 = fitnessOf({ solved: true, steps: 10, maxSteps: 50, startDist: 4, endDist: 0, visited: 5, openCells: 7, bonus: 0.1 });
+  assert.equal(s1, 1.5 + (1 - 10 / 50) + 0.1);
+  const u1 = fitnessOf({ solved: false, steps: 10, maxSteps: 50, startDist: 8, endDist: 4, visited: 12, openCells: 40, bonus: 0.05 });
+  assert.equal(u1, 2 * (8 - 4) / 8 - 10 * 0.002 + 0.05);
+  // bonus é clampado a [0, +0.25] DENTRO de fitnessOf
+  assert.equal(fitnessOf({ solved: true, steps: 1, maxSteps: 2, startDist: 1, endDist: 0, visited: 0, openCells: 1, bonus: 9 }), 1.5 + 0.5 + 0.25);
+  assert.equal(fitnessOf({ solved: false, steps: 0, maxSteps: 1, startDist: 4, endDist: 4, visited: 0, openCells: 1, bonus: -3 }), 0);
+  // GUARDA LEXICOGRÁFICA: qualquer solved ≥ 1.25 > qualquer unsolved ≤ 1.2
+  const rnd = (s) => { let a = s; return () => { a = (a * 1664525 + 1013904223) >>> 0; return a / 4294967296; }; };
+  const r = rnd(7);
+  let minSolved = Infinity; let maxUnsolved = -Infinity;
+  for (let i = 0; i < 4000; i++) {
+    const args = {
+      steps: Math.floor(r() * 200), maxSteps: 200,
+      startDist: 1 + Math.floor(r() * 60), endDist: Math.floor(r() * 60),
+      visited: Math.floor(r() * 100), openCells: 100,
+      bonus: r() * 0.4 - 0.1,
+    };
+    const sv = fitnessOf({ ...args, solved: true });
+    const uv = fitnessOf({ ...args, solved: false });
+    if (sv < minSolved) minSolved = sv;
+    if (uv > maxUnsolved) maxUnsolved = uv;
+  }
+  assert.ok(minSolved >= 1.25, `solved mínimo ${minSolved} < 1.25`);
+  assert.ok(maxUnsolved <= 1.2, `unsolved máximo ${maxUnsolved} > 1.2`);
+  assert.ok(minSolved > maxUnsolved, 'guarda: todo solved supera todo unsolved');
 });
 
 const maze5 = generateMaze(5, 5, 3);
@@ -504,10 +565,12 @@ check('runEpisode: determinismo, terminação e traços', () => {
   assert.ok(c.steps <= 3);
   const d = runEpisode(net, maze5, { trace: true, maxSteps: 4 });
   assert.equal(d.sensorTrace.length, d.steps);
-  assert.ok(d.sensorTrace[0] instanceof Float32Array && d.sensorTrace[0].length === 12, 'E13: defeito memoryMode=sinapses ⇒ traços de 12');
+  assert.ok(d.sensorTrace[0] instanceof Float32Array && d.sensorTrace[0].length === 12, 'v7: SEMPRE 12 sinais');
+  // v7: memoryMode é ignorado — mesmo 'ambos'/'mapa' correm com 12 entradas
   const netMap = makeNetwork({ seed: 17, nSlots: 8, nInputs: 12 + maze5.cols * maze5.rows });
   const dMap = runEpisode(netMap, maze5, { trace: true, maxSteps: 4, memoryMode: 'ambos' });
-  assert.equal(dMap.sensorTrace[0].length, 12 + maze5.cols * maze5.rows, 'E13: memoryMode=ambos ⇒ traços 12+células');
+  assert.equal(dMap.sensorTrace[0].length, 12, 'v7: memoryMode=ambos continua a dar 12 sinais');
+  assert.ok(Number.isFinite(dMap.fitness), 'rede com nIn maior não pode infecionar com NaN');
   const e = runEpisode(net, maze5);
   assert.equal(e.sensorTrace, null);
   // penalidade de revisita: um passeio que fique no sítio acumula penalidades negativas
@@ -570,8 +633,9 @@ check('evolve: determinismo e hooks', () => {
   assert.equal(r1.best, r2.best);
   assert.equal(r1.generations, 6);
   assert.deepEqual(r1.bankStats, r2.bankStats);
-  assert.deepEqual(Object.keys(r1).sort(), ['bankStats', 'best', 'bestNet', 'generations', 'history', 'neurogenesisBursts']); // E12
+  assert.deepEqual(Object.keys(r1).sort(), ['bankStats', 'best', 'bestNet', 'finalLevel', 'generations', 'history', 'neurogenesisBursts']); // E12+E17
   assert.equal(typeof r1.neurogenesisBursts, 'number');
+  assert.equal(r1.finalLevel, maze5.cols, 'sem curriculum finalLevel = tamanho dos mazes');
   assert.deepEqual(Object.keys(r1.history[0]).sort(), ['best', 'gen', 'mean', 'nConns', 'nNeurons']);
   // shouldStop aborta
   const r3 = evolve(cfg, { shouldStop: (st) => st.gen >= 2 });
@@ -822,6 +886,23 @@ check('E12: addMemoryNeuron cria autoconexão forte W≈0.85, alpha≈0.05 e inv
     assert.ok(Math.abs(net.W[s * n + j]) < 0.3 + 1e-12, 'saída devia ser U(-0.3,0.3)');
   }
   assert.equal(nOut, 1, 'exatamente 1 ligação de saída (além da autoconexão)');
+  // v7: a ligação de saída é RECORRENTE para um neurónio de DECISÃO e há entrada
+  // recorrente vinda de um neurónio de decisão (cadeia decisão → sinapse → memória)
+  let outTarget = -1;
+  for (let j = 0; j < n; j++) {
+    if (j === s) continue;
+    if (net.M[s * n + j]) { assert.equal(outTarget, -1, 'mais de uma saída recorrente'); outTarget = j; }
+  }
+  assert.ok(outTarget >= 0, 'o mem-neuron tem de ter saída recorrente');
+  assert.ok(isDecisionNetUnit(net, outTarget), 'a saída do mem-neuron tem de ir para um neurónio de DECISÃO');
+  assert.equal(net.M_out[s * net.nOut + 0] + net.M_out[s * net.nOut + 1] + net.M_out[s * net.nOut + 2] + net.M_out[s * net.nOut + 3], 0, 'v7: sem ligação direta ao readout');
+  let inSrc = -1;
+  for (let j = 0; j < n; j++) {
+    if (j === s) continue;
+    if (net.M[j * n + s]) { assert.equal(inSrc, -1, 'mais de uma entrada recorrente'); inSrc = j; }
+  }
+  assert.ok(inSrc >= 0, 'o mem-neuron tem de ter entrada recorrente');
+  assert.ok(isDecisionNetUnit(net, inSrc), 'a entrada do mem-neuron tem de vir de um neurónio de DECISÃO');
   checkInvariants(net);
 });
 
@@ -902,11 +983,11 @@ check('E12: evolve — estagnação dispara burst (setBias 50 gens, neurogenesis
 });
 
 // ---------------------------------------------------------------------------
-// E13: modo de memória configurável
+// E13 + REORIENTAÇÃO v7: memoryMode — 'sinapses' FIXO (mapa/ambos extintos na demo)
 // ---------------------------------------------------------------------------
-console.log('\n== E13: memoryMode ==');
+console.log('\n== E13/v7: memoryMode (fixo em sinapses) ==');
 
-check('E13: memoryMode sinapses — traços 12, fastOn true, F ativo', () => {
+check('E13/v7: memoryMode sinapses — traços 12, fastOn true, F ativo', () => {
   const net = makeNetwork({ seed: 42, nSlots: 8 });
   net.M[0] = 1; net.W[0] = 0.1; // ligação mascarada para F acumular
   const r = runEpisode(net, maze5, { memoryMode: 'sinapses', trace: true, maxSteps: 6 });
@@ -915,49 +996,652 @@ check('E13: memoryMode sinapses — traços 12, fastOn true, F ativo', () => {
   assert.notEqual(net.F[0], 0, 'F devia estar ativo durante o episódio');
 });
 
-check('E13: memoryMode mapa — traços 12+células, fastOn false, F inativo', () => {
-  const net = makeNetwork({ seed: 43, nSlots: 8, nInputs: 12 + maze5.cols * maze5.rows });
-  net.M[0] = 1; net.W[0] = 0.1;
-  const r = runEpisode(net, maze5, { memoryMode: 'mapa', trace: true, maxSteps: 6 });
-  assert.equal(r.sensorTrace[0].length, 12 + maze5.cols * maze5.rows);
-  assert.equal(net.fastOn, false, 'mapa desliga as sinapses rápidas');
-  assert.ok(net.F.every((v) => v === 0), 'F devia ficar inativo');
+check('v7: memoryMode "mapa"/"ambos" é IGNORADO — episódio sempre 12 entradas + sinapses rápidas', () => {
+  const net12 = makeNetwork({ seed: 43, nSlots: 8 });
+  net12.M[0] = 1; net12.W[0] = 0.1;
+  for (const mode of ['mapa', 'ambos', 'sinapses', 'nada']) {
+    const r = runEpisode(net12, maze5, { memoryMode: mode, trace: true, maxSteps: 6 });
+    assert.equal(r.sensorTrace[0].length, 12, `memoryMode=${mode} tem de dar 12 entradas`);
+    assert.equal(net12.fastOn, true, `memoryMode=${mode} mantém as sinapses rápidas LIGADAS`);
+    assert.notEqual(net12.F[0], 0, 'F tem de ficar ativo em qualquer modo');
+    assert.ok(Number.isFinite(r.fitness));
+  }
+  // rede guardada com outra aritmética de entradas (nIn > 12): sem NaN (entradas em falta = 0)
+  const net37 = makeNetwork({ seed: 43, nSlots: 8, nInputs: 12 + maze5.cols * maze5.rows });
+  const r37 = runEpisode(net37, maze5, { memoryMode: 'ambos', maxSteps: 6 });
+  assert.ok(Number.isFinite(r37.fitness), 'nIn maior não pode infecionar o episódio com NaN');
 });
 
-check('E13: memoryMode ambos — traços 12+células E sinapses rápidas ativas', () => {
-  const net = makeNetwork({ seed: 44, nSlots: 8, nInputs: 12 + maze5.cols * maze5.rows });
-  net.M[0] = 1; net.W[0] = 0.1;
-  const r = runEpisode(net, maze5, { memoryMode: 'ambos', trace: true, maxSteps: 6 });
-  assert.equal(r.sensorTrace[0].length, 12 + maze5.cols * maze5.rows);
-  assert.equal(net.fastOn, true);
-  assert.notEqual(net.F[0], 0, 'F devia estar ativo');
-});
-
-check('E13: evaluate/solvedCount aceitam memoryMode (defeito = sinapses)', () => {
+check('v7: evaluate/solvedCount ignoram memoryMode e mantêm a verificação exata', () => {
   const net12 = makeNetwork({ seed: 45, nSlots: 8 });
-  const net37 = makeNetwork({ seed: 45, nSlots: 8, nInputs: 12 + maze5.cols * maze5.rows });
   const fDef = evaluate(net12, [maze5]);
   assert.equal(evaluate(net12, [maze5], { memoryMode: 'sinapses' }), fDef, 'defeito deve ser sinapses');
-  assert.ok(Number.isFinite(evaluate(net37, [maze5], { memoryMode: 'ambos' })));
-  assert.ok(Number.isFinite(evaluate(net37, [maze5], { memoryMode: 'mapa' })));
-  const sc = solvedCount(net37, [maze5], { memoryMode: 'mapa' });
+  assert.equal(evaluate(net12, [maze5], { memoryMode: 'mapa' }), fDef, 'mapa ignorado');
+  assert.equal(evaluate(net12, [maze5], { memoryMode: 'ambos' }), fDef, 'ambos ignorado');
+  const sc = solvedCount(net12, [maze5], { memoryMode: 'mapa' });
   assert.deepEqual(Object.keys(sc).sort(), ['solved', 'total']);
   assert.equal(sc.total, 1);
+  assert.equal(sc.solved, runEpisode(net12, maze5, {}).solved ? 1 : 0);
 });
 
-check('E13: evolve constrói nets com nIn do modo (12 para sinapses; 12+células para mapa/ambos)', () => {
-  const cells = maze5.cols * maze5.rows;
+check('v7: evolve constrói SEMPRE redes de 12 entradas (mapa/ambos ignorados)', () => {
   const base = { population: 6, generations: 2, mazes: [maze5], seed: 64, elite: 2, mutationRate: 0.9 };
   assert.equal(evolve({ ...base, memoryMode: 'sinapses' }).bestNet.nIn, 12);
   assert.equal(evolve(base).bestNet.nIn, 12, 'defeito é sinapses');
-  assert.equal(evolve({ ...base, memoryMode: 'mapa' }).bestNet.nIn, 12 + cells);
-  assert.equal(evolve({ ...base, memoryMode: 'ambos' }).bestNet.nIn, 12 + cells);
-  // sem contagens fixas: 7×7 com mapa detecta 12 + 49
+  assert.equal(evolve({ ...base, memoryMode: 'mapa' }).bestNet.nIn, 12, 'mapa EXTINTO ⇒ 12');
+  assert.equal(evolve({ ...base, memoryMode: 'ambos' }).bestNet.nIn, 12, 'ambos EXTINTO ⇒ 12');
+  // sem contagens fixas: o nIn sai do próprio sense() (12 sinais nomeados)
   const m7 = generateMaze(7, 7, 1);
-  assert.equal(evolve({ ...base, mazes: [m7], memoryMode: 'mapa' }).bestNet.nIn, 12 + m7.cols * m7.rows);
-  assert.equal(evolve({ ...base, mazes: [m7], memoryMode: 'sinapses' }).bestNet.nIn, 12);
+  assert.equal(evolve({ ...base, mazes: [m7], memoryMode: 'mapa' }).bestNet.nIn, sense(m7, 1, 1).length);
+  assert.equal(sense(m7, 1, 1).length, 12);
+});
+
+// ---------------------------------------------------------------------------
+// EMENDA v6/E15: fitness BFS no episódio (grelha onde BFS ≠ Manhattan)
+// ---------------------------------------------------------------------------
+console.log('\n== E15: fitness BFS no runEpisode ==');
+
+// Labirinto 5x5 à mão (mesma grelha de unit-core): exit (3,1), dist BFS do start = 6
+// (Manhattan = 2 — bloqueada pela coluna de paredes x=2).
+//   #####   #.#.#   #.#.#   #...#   #####
+function handBfsMaze() {
+  const cols = 5, rows = 5;
+  const grid = new Uint8Array(cols * rows);
+  for (const [x, y] of [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0], [0, 1], [2, 1], [4, 1], [0, 2], [2, 2], [4, 2], [0, 3], [4, 3], [0, 4], [1, 4], [2, 4], [3, 4], [4, 4]]) grid[y * cols + x] = 1;
+  return {
+    cols, rows, seed: 0, grid,
+    start: { x: 1, y: 1 }, exit: { x: 3, y: 1 },
+    idx: (x, y) => y * cols + x,
+    isWall: (x, y) => (x < 0 || y < 0 || x >= cols || y >= rows ? true : grid[y * cols + x] === 1),
+  };
+}
+
+check('E15: runEpisode usa distâncias BFS (fitness exato reconstruído do path)', () => {
+  const g = handBfsMaze();
+  const df = distanceField(g);
+  assert.equal(df[g.idx(1, 1)], 6, 'distância BFS do start = 6 (Manhattan seria 2)');
+  assert.equal(df[g.idx(1, 2)], 5, 'BFS (1,2) = 5 (Manhattan seria 3)');
+  const bfsStart = (m) => df[m.idx(1, 1)];
+  const bfsEnd = (m, e) => df[m.idx(e.x, e.y)];
+  // (a) política CRIADA à mão: saída constante "↓" (b_out domina, W_out a zero) ⇒
+  // 1 passo move (1,1)→(1,2). Com maxSteps=1: BFS dá 2*(6−5)/6; Manhattan daria
+  // 2*(2−3)/2 = −1 — valores MUITO diferentes ⇒ prova de que o episódio usa BFS.
+  const bot = makeNetwork({ seed: 5, nSlots: 4, memoryHorizon: 60 });
+  bot.W_out.fill(0);
+  bot.b_out[0] = 0; bot.b_out[1] = 1; bot.b_out[2] = 0; bot.b_out[3] = 0; // argmax = 1 (down)
+  const r1 = runEpisode(bot, g, { maxSteps: 1 });
+  assert.deepEqual(r1.path, [{ x: 1, y: 1 }, { x: 1, y: 2 }], 'política constante ↓ num passo');
+  assert.equal(r1.solved, false);
+  // valor EXATO novo: 1 entrada (bónus α=0.005), sem revisitas/bumps/ciclos.
+  const expectBfs1 = fitnessOf({ solved: false, steps: 1, maxSteps: 1, startDist: 6, endDist: 5, visited: 2, openCells: 7, bonus: 0.005 });
+  assert.equal(r1.bonus, 0.005, 'primeira entrada paga α');
+  assert.equal(r1.penalty, 0);
+  assert.equal(r1.penaltyCycle, 0);
+  assert.ok(Math.abs(r1.fitness - expectBfs1) < 1e-12, `fitness ${r1.fitness} != esperado BFS ${expectBfs1}`);
+  const expectMan1 = Math.min(2 * (2 - 3) / 2 - 1 * 0.002 + 0.005, 1.2);
+  assert.ok(Math.abs(r1.fitness - expectMan1) > 0.5, `discriminante: BFS ${r1.fitness} vs Manhattan ${expectMan1}`);
+  // (b) rede livre (seed 71, 40 passos): decomposição EXATA com o modelo novo —
+  // fitness = guarda(fitnessOf(bónus) + penalty(tecto −0.25) + penaltyCycle).
+  // (a reconstrução passo-a-passo das cargas Trémaux/pares/ciclos vive nos checks
+  // "OPÇÃO B" abaixo; aqui valida-se a contabilidade total do runEpisode.)
+  const net = makeNetwork({ seed: 71, nSlots: 8, memoryHorizon: 60 });
+  const r = runEpisode(net, g, { maxSteps: 40 });
+  assert.ok(Math.abs(r.penalty) <= 0.25 + 1e-12, 'tecto duro −0.25 na parte de revisita');
+  const end = r.path[r.path.length - 1];
+  const base = fitnessOf({
+    solved: r.solved, steps: r.steps, maxSteps: 40,
+    startDist: bfsStart(g), endDist: bfsEnd(g, end),
+    visited: r.visitedCells, openCells: 7, bonus: r.bonus,
+  });
+  let expect = base + r.penalty + r.penaltyCycle;
+  if (r.solved) expect = Math.max(expect, 1.25);
+  else expect = Math.min(expect, 1.2);
+  assert.ok(Math.abs(r.fitness - expect) < 1e-12, `fitness ${r.fitness} != decomposição ${expect}`);
+});
+
+// ---------------------------------------------------------------------------
+// EMENDA v6/E16: horizonte de memória → fastLambda + cache da máscara de F
+// ---------------------------------------------------------------------------
+console.log('\n== E16: memoryHorizon + cache de F ==');
+
+check('E16: memoryHorizon → fastLambda = exp(−1/H); fastLambda explícito ganha (compat)', () => {
+  assert.equal(makeNetwork({ memoryHorizon: 60 }).fastLambda, Math.exp(-1 / 60));
+  assert.equal(makeNetwork({ memoryHorizon: 800 }).fastLambda, Math.exp(-1 / 800));
+  assert.ok(Math.abs(makeNetwork({ memoryHorizon: 60 }).fastLambda - 0.983) < 0.001, 'H=60 ⇒ ~0.983');
+  assert.ok(Math.abs(makeNetwork({ memoryHorizon: 800 }).fastLambda - 0.9987) < 0.0005, 'H=800 ⇒ ~0.9987');
+  // fastLambda explícito tem SEMPRE prioridade sobre memoryHorizon
+  assert.equal(makeNetwork({ memoryHorizon: 60, fastLambda: 0.5 }).fastLambda, 0.5);
+  assert.equal(makeNetwork({ fastLambda: 0.3 }).fastLambda, 0.3);
+  // sem nenhum dos dois: default E11 intacto (compatibilidade)
+  assert.equal(makeNetwork({}).fastLambda, 0.92);
+  assert.equal(makeNetwork({ memoryHorizon: 0 }).fastLambda, 0.92); // inválido ⇒ default
+  assert.equal(makeNetwork({ memoryHorizon: -5 }).fastLambda, 0.92);
+  assert.equal(makeNetwork({ memoryHorizon: NaN }).fastLambda, 0.92);
+  // cloneNet preserva o λ derivado
+  assert.equal(cloneNet(makeNetwork({ memoryHorizon: 60 })).fastLambda, Math.exp(-1 / 60));
+});
+
+check('E16: evolve deriva o horizonte por labirinto (min(800, max(60, 2·openCells)))', () => {
+  assert.equal(memoryHorizonFor(maze5), 60); // 5×5: 7 abertas ⇒ max(60, 14) = 60
+  assert.equal(memoryHorizonFor(generateMaze(9, 9, 1)), 62); // 9×9: 31 abertas ⇒ 62
+  assert.equal(memoryHorizonFor(generateMaze(31, 31, 1)), 800); // 31×31: 449 abertas ⇒ min(800,898)
+  const res = evolve({ population: 4, generations: 1, mazes: [maze5], seed: 3, elite: 1, mutationRate: 0.9 });
+  assert.equal(res.bestNet.fastLambda, Math.exp(-1 / 60), 'redes do evolve usam o horizonte do labirinto');
+  // overrides configuráveis (probes): memoryHorizon e fastLambda explícitos
+  const res2 = evolve({ population: 4, generations: 1, mazes: [maze5], seed: 3, elite: 1, memoryHorizon: 300 });
+  assert.equal(res2.bestNet.fastLambda, Math.exp(-1 / 300));
+  const res3 = evolve({ population: 4, generations: 1, mazes: [maze5], seed: 3, elite: 1, fastLambda: 0.77 });
+  assert.equal(res3.bestNet.fastLambda, 0.77);
+});
+
+// Referência SEM cache: cópia literal da dinâmica do contrato com loops ingénuos n²
+// (inclui a regra v7 de F com atividade das unidades de decisão). Serve de verdade
+// exata contra a implementação cacheada de network.step.
+function referenceStep(net, inputArr) {
+  const { nIn, nOut, nSlots: n, alive, W, M, b, alpha, alphaJ, h, W_in, M_in, W_out, M_out, b_out, F } = net;
+  const useFast = net.fastOn !== false && !!F;
+  const dec = new Uint8Array(n);
+  for (let j = 0; j < n; j++) {
+    for (let i = 0; i < nOut; i++) if (M_out[j * nOut + i]) { dec[j] = 1; break; }
+  }
+  const drive = new Float64Array(n);
+  for (let j = 0; j < n; j++) {
+    if (!alive[j]) continue;
+    let d = b[j];
+    for (let k = 0; k < nIn; k++) {
+      const p = k * n + j;
+      if (M_in[p]) {
+        const v = inputArr[k];
+        if (v !== undefined) d += v * W_in[p];
+      }
+    }
+    drive[j] = d;
+  }
+  const nh = new Float64Array(n);
+  for (let j = 0; j < n; j++) {
+    if (!alive[j]) { h[j] = 0; continue; }
+    let r = 0;
+    for (let i = 0; i < n; i++) {
+      const p = i * n + j;
+      if (M[p]) r += h[i] * (useFast ? W[p] + F[p] : W[p]);
+    }
+    const a = alphaJ && alphaJ[j] > 0 ? alphaJ[j] : alpha;
+    nh[j] = (1 - a) * h[j] + a * Math.tanh(r + drive[j]);
+  }
+  h.set(nh);
+  if (useFast) {
+    const lam = net.fastLambda;
+    const eta = net.fastEta;
+    for (let i = 0; i < n; i++) {
+      const hi = h[i];
+      for (let j = 0; j < n; j++) {
+        const p = i * n + j;
+        if (!M[p]) continue;
+        const hj = h[j];
+        const di = dec[i] ? hi : 0;
+        const dj = dec[j] ? hj : 0;
+        const v = lam * F[p] + eta * (hi * hj + hi * dj + di * hj);
+        F[p] = v > 2 ? 2 : v < -2 ? -2 : v;
+      }
+    }
+  }
+  const y = new Float32Array(nOut);
+  for (let i = 0; i < nOut; i++) {
+    let v = b_out[i];
+    for (let j = 0; j < n; j++) {
+      const p = j * nOut + i;
+      if (M_out[p]) v += h[j] * W_out[p];
+    }
+    y[i] = v;
+  }
+  return y;
+}
+
+check('E16: updates de F com cache são EXATOS vs referência sem cache (com mutações)', () => {
+  const seq = fixedInputs(12, 45, 77);
+  const build = () => {
+    const net = makeNetwork({ seed: 50, nSlots: 10, memoryHorizon: 60 });
+    const rng = makeRng(70);
+    for (let t = 0; t < 3; t++) assert.ok(applyOp(net, 'addNeuron', rng));
+    assert.ok(applyOp(net, 'addConn', rng));
+    assert.ok(applyOp(net, 'addMemoryNeuron', rng));
+    return { net, rng };
+  };
+  const A = build(); // produção: network.step (cache de máscaras)
+  const B = build(); // referência: cálculo ingénuo sem cache
+  assert.deepEqual(snapshot(A.net), snapshot(B.net), 'setup divergente');
+  const opCycle = ['addConn', 'perturbWeights', 'addNeuron', 'removeConn', 'rewire', 'addMemoryNeuron', 'pruneNeuron', 'splitNeuron', 'changeLeak'];
+  for (let t = 0; t < seq.length; t++) {
+    if (t % 6 === 2) { // mutações estruturais idênticas nos dois lados (ops invalidam o cache)
+      const op = opCycle[t % opCycle.length];
+      assert.equal(applyOp(A.net, op, A.rng), applyOp(B.net, op, B.rng), `op ${op} divergiu em ${t}`);
+    }
+    if (t % 13 === 7) { // escrita DIRETA em M + invalidateMaskCache (contrato E16)
+      const n = A.net.nSlots;
+      const p = 2 * n + 3;
+      A.net.M[p] = 0; A.net.W[p] = 0; A.net.F[p] = 0;
+      B.net.M[p] = 0; B.net.W[p] = 0; B.net.F[p] = 0;
+      const q = 4 * n + 5;
+      A.net.M[q] = 1; A.net.W[q] = 0; A.net.F[q] = 0;
+      B.net.M[q] = 1; B.net.W[q] = 0; B.net.F[q] = 0;
+      invalidateMaskCache(A.net);
+      invalidateMaskCache(B.net);
+    }
+    const ya = step(A.net, seq[t]);
+    const yb = referenceStep(B.net, seq[t]);
+    assert.deepEqual(Array.from(ya), Array.from(yb), `y divergente em ${t}`);
+    assert.equal(A.net.nSlots, B.net.nSlots);
+    for (let k = 0; k < A.net.h.length; k++) {
+      assert.ok(Object.is(A.net.h[k], B.net.h[k]), `h[${k}] divergente em ${t}`);
+      assert.ok(Object.is(A.net.F[k], B.net.F[k]), `F[${k}] divergente em ${t}`);
+    }
+    checkInvariants(A.net, `(tick ${t})`);
+    checkInvariants(B.net, `(ref ${t})`);
+  }
+});
+
+check('E16: cache reutilizado entre ticks; reconstruído após mutações (applyOp/resetNet/ensureCapacity)', () => {
+  const net = makeNetwork({ seed: 51, nSlots: 8 });
+  const rng = makeRng(71);
+  assert.ok(applyOp(net, 'addNeuron', rng));
+  assert.ok(applyOp(net, 'addConn', rng));
+  const x = new Float32Array(12).fill(0.3);
+  step(net, x);
+  const cache1 = net._masks;
+  assert.ok(cache1 && cache1.rec instanceof Int32Array && cache1.inp instanceof Int32Array, 'cache nasce no 1.º step');
+  step(net, x);
+  assert.equal(net._masks, cache1, 'sem mutação o cache tem de ser reutilizado');
+  applyOp(net, 'changeLeak', rng); // qualquer applyOp invalida (mesmo sem tocar em M)
+  assert.equal(net._masks, null, 'applyOp tem de invalidar o cache');
+  step(net, x);
+  assert.ok(net._masks && net._masks !== cache1, 'reconstruído após mutação');
+  invalidateMaskCache(net);
+  assert.equal(net._masks, null);
+  invalidateMaskCache(net); // idempotente
+  assert.equal(net._masks, null);
+  step(net, x);
+  assert.ok(net._masks);
+  resetNet(net);
+  assert.equal(net._masks, null, 'resetNet invalida');
+  step(net, x);
+  assert.equal(ensureCapacity(net, net.nSlots + 1), true);
+  assert.equal(net._masks, null, 'ensureCapacity invalida (stride novo)');
+  step(net, x);
+  assert.equal(net._masks.n, net.nSlots, 'cache reconstruído para o nSlots novo');
+});
+
+check('v7: F regista o histórico de DECISÕES (sinapses a unidades de decisão acumulam 3×)', () => {
+  // slot 0 = DECISÃO (alimenta o readout); slot 1 = não-decisão. Dinâmicas idênticas
+  // (mesmas entradas/pesos) ⇒ h[0] === h[1] em cada ensaio. Autoconexões iguais e F a
+  // partir de 0: a regra v7 dá F_dec = η·(h² + h·d + d·h) = 3ηh² e F_nao-dec = ηh².
+  const net = makeNetwork({ seed: 60, nSlots: 4, memoryHorizon: 60 });
+  net.fastEta = 0.05; // pequeno: sem clip ±2 para ver a razão exata
+  const n = net.nSlots;
+  net.alive[1] = 1;
+  for (let k = 0; k < net.nIn; k++) {
+    net.M_in[k * n + 1] = net.M_in[k * n];
+    net.W_in[k * n + 1] = net.W_in[k * n];
+  }
+  net.M[0] = 1; net.W[0] = 0.2; // autoconexão do neurónio de DECISÃO
+  net.M[1 * n + 1] = 1; net.W[1 * n + 1] = 0.2; // autoconexão do NÃO-decisão
+  invalidateMaskCache(net);
+  assert.ok(isDecisionNetUnit(net, 0), 'slot 0 alimenta o readout');
+  assert.ok(!isDecisionNetUnit(net, 1), 'slot 1 não alimenta o readout');
+  // ensaios independentes de 1 tick (F parte de 0 a cada ensaio)
+  for (let trial = 0; trial < 5; trial++) {
+    resetNet(net);
+    const x = new Float32Array(12).fill(0.15 + trial * 0.1);
+    step(net, x);
+    assert.ok(Object.is(net.h[0], net.h[1]), 'dinâmicas idênticas até à atualização de F');
+    assert.notEqual(net.F[0], 0);
+    assert.notEqual(net.F[1 * n + 1], 0);
+    assert.ok(Math.abs(net.F[0]) < 2 && Math.abs(net.F[1 * n + 1]) < 2, 'sem clip para a comparação');
+    assert.ok(Math.abs(net.F[0] - 3 * net.F[1 * n + 1]) <= 1e-12 * Math.abs(net.F[0]) + 1e-15,
+      `sinapse de decisão ${net.F[0]} devia ser ~3× a não-decisão ${net.F[1 * n + 1]}`);
+  }
+  checkInvariants(net);
+});
+
+// ---------------------------------------------------------------------------
+// EMENDA v6/E17: curriculum — promoção de nível com transferência + burst
+// ---------------------------------------------------------------------------
+console.log('\n== E17: curriculum ==');
+
+check('E17: curriculum — 5×5 resolvido ⇒ promoção a 7×7 mantendo população e banco + burst', () => {
+  const timeline = [];
+  const pops = new Map(); // gen → indivíduos (referências vivas)
+  const banks = new Map(); // gen → bankStats (snapshot)
+  let promotedInfo = null;
+  const res = evolve(
+    // orçamento: 5×5 com 3 layouts DISTINTOS (correção 2026-09-27) exige memória real;
+    // medido com o campeão por solvedCount + candidatos aleatórios: promoção ~gen 37.
+    { population: 100, generations: 150, curriculum: { startSize: 5, targetSize: 7 }, seed: 123, elite: 6, mutationRate: 0.9 },
+    {
+      onGeneration: (gen, st) => {
+        timeline.push({
+          gen, level: st.level, levelCount: st.levelCount,
+          progress: st.levelProgress, promoted: st.promoted, bias: st.bankStats.addMemoryNeuron.bias,
+        });
+        pops.set(gen, st.population);
+        banks.set(gen, st.bankStats);
+        if (st.promoted && !promotedInfo) {
+          promotedInfo = { gen, from: st.promoted.from, to: st.promoted.to };
+        }
+      },
+    },
+  );
+  assert.ok(promotedInfo, 'o curriculum tinha de promover 5×5 → 7×7');
+  assert.equal(promotedInfo.from, 5);
+  assert.equal(promotedInfo.to, 7);
+  const promoGen = promotedInfo.gen;
+  const promoEntry = timeline.find((t) => t.gen === promoGen);
+  assert.equal(promoEntry.level, 5, 'stats.level = tamanho treinado na geração da promoção');
+  assert.deepEqual(promoEntry.progress, { solved: 3, total: 3 }, 'promoção exige campeão 3/3 no nível');
+  assert.equal(promoEntry.bias, 3, 'a promoção tem de disparar o burst de neurogénese (setBias)');
+  assert.ok(res.neurogenesisBursts >= 1, 'neurogenesisBursts conta o burst da promoção');
+  // após a promoção: nível 7, nível 2, progresso do NOVO nível (3 mazes, exato)
+  const after = timeline.filter((t) => t.gen > promoGen);
+  assert.ok(after.length >= 3, 'precisamos de gerações pós-promoção para verificar a transferência');
+  for (const t of after.slice(0, 3)) {
+    assert.equal(t.level, 7, 'treino seguinte é 7×7');
+    assert.equal(t.levelCount, 2);
+    assert.equal(t.promoted, null);
+    assert.deepEqual(Object.keys(t.progress).sort(), ['solved', 'total']);
+    assert.equal(t.progress.total, 3);
+  }
+  // POPULAÇÃO preservada (transferência): os indivíduos elite da geração da promoção
+  // reaparecem na geração seguinte com o MESMO idx e a MESMA referência de net.
+  const promoPop = pops.get(promoGen);
+  const postPop = pops.get(promoGen + 1);
+  assert.ok(promoPop && postPop, 'populações capturadas em ambos os lados da promoção');
+  assert.notEqual(postPop, promoPop, 'a geração seguinte tem uma população nova (elite + filhos)');
+  const promoByIdx = new Map(promoPop.map((ind) => [ind.idx, ind]));
+  let kept = 0;
+  for (const ind of postPop) {
+    const old = promoByIdx.get(ind.idx);
+    if (old && old.net === ind.net) kept++;
+  }
+  assert.ok(kept >= 6, `pelo menos os elite=6 indivíduos deviam ser preservados (=${kept})`);
+  // BANCO preservado: contagens acumuladas NÃO reiniciam na promoção e P_min mantém-se
+  const bankPost = banks.get(promoGen + 1);
+  const bankPromo = banks.get(promoGen);
+  for (const name of OP_NAMES) {
+    assert.ok(bankPost[name].count >= bankPromo[name].count, `contagem de ${name} reiniciou na promoção`);
+    assert.ok(bankPost[name].count >= 0 && Number.isFinite(bankPost[name].p));
+    assert.ok(bankPost[name].p >= 0.05 - 1e-7, 'P_min mantido após a promoção');
+  }
+  // E16: memória rápida reajustada ao NOVO nível (7×7 ⇒ openCells=17 ⇒ H=60 ⇒ λ=exp(−1/60))
+  assert.equal(res.bestNet.fastLambda, Math.exp(-1 / 60));
+  assert.equal(res.finalLevel, 7, 'finalLevel = tamanho do nível atingido (targetSize)');
+  assert.equal(res.generations > promoGen, true);
+});
+
+check('E17: sem curriculum o comportamento é o de sempre (sem promoções, finalLevel = tamanho)', () => {
+  const seen = [];
+  const res = evolve(
+    { population: 6, generations: 4, mazes: [maze5], seed: 9, elite: 2, mutationRate: 0.9 },
+    { onGeneration: (gen, st) => seen.push({ level: st.level, progress: st.levelProgress, promoted: st.promoted, levelCount: st.levelCount }) },
+  );
+  assert.equal(res.finalLevel, 5);
+  for (const s of seen) {
+    assert.equal(s.level, 5);
+    assert.equal(s.levelCount, 1);
+    assert.equal(s.promoted, null);
+    assert.deepEqual(Object.keys(s.progress).sort(), ['solved', 'total']);
+    assert.equal(s.progress.total, 1);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// EMENDA v6/E18: evaluate com mazePerGen (amostra rotativa determinística)
+// ---------------------------------------------------------------------------
+console.log('\n== E18: mazePerGen ==');
+
+check('E18: evaluate com mazePerGen é determinístico e rotativo (1 labirinto por chamada)', () => {
+  const mazes = [maze5, generateMaze(5, 5, 4), generateMaze(5, 5, 9)];
+  const net = makeNetwork({ seed: 70, nSlots: 8 });
+  const want = mazes.map((m) => runEpisode(net, m, {}).fitness);
+  const run = (seed) => {
+    const opts = { mazePerGen: true, rng: makeRng(seed) }; // opts NOVOS por run
+    const out = [];
+    for (let i = 0; i < 6; i++) out.push(evaluate(net, mazes, opts));
+    return out;
+  };
+  const a = run(77);
+  const b = run(77);
+  assert.deepEqual(a, b, 'mesma seed e ordem de chamadas ⇒ mesma sequência');
+  // rotação round-robin com offset inicial de opts.rng: idx = (offset + i) % 3
+  const probe = makeRng(77);
+  const offset = Math.floor(probe.next() * mazes.length) % mazes.length;
+  for (let i = 0; i < 6; i++) {
+    assert.equal(a[i], want[(offset + i) % 3], `amostra ${i} devia ser o labirinto ${(offset + i) % 3}`);
+  }
+  // cobertura garantida: 3 chamadas consecutivas cobrem os 3 labirintos (uma vez cada)
+  const covered = new Set();
+  for (let i = 0; i < 3; i++) covered.add((offset + i) % 3);
+  assert.equal(covered.size, 3, 'todos os mazes recebem cobertura por geração');
+  // sem opts.rng: começa em 0 e continua a rodar
+  const noRng = { mazePerGen: true };
+  assert.equal(evaluate(net, mazes, noRng), want[0]);
+  assert.equal(evaluate(net, mazes, noRng), want[1]);
+  assert.equal(evaluate(net, mazes, noRng), want[2]);
+  // sem mazePerGen: média exata sobre todos (comportamento legacy intacto)
+  assert.equal(evaluate(net, mazes, {}), (want[0] + want[1] + want[2]) / 3);
+  // a verificação do campeão (solvedCount) continua EXATA mesmo com mazePerGen pedido
+  const sc = solvedCount(net, mazes, { mazePerGen: true, rng: makeRng(5) });
+  let manual = 0;
+  for (const m of mazes) if (runEpisode(net, m, {}).solved) manual++;
+  assert.equal(sc.solved, manual);
+  assert.equal(sc.total, 3);
+});
+
+check('E18: evolve com curriculum avalia por amostra (mazePerGen) e mantém o campeão exato', () => {
+  const sampled = [];
+  const res = evolve(
+    { population: 10, generations: 3, curriculum: { startSize: 5, targetSize: 5 }, seed: 21, elite: 3, mutationRate: 0.9 },
+    { onGeneration: (gen, st) => sampled.push({ level: st.level, progress: st.levelProgress }) },
+  );
+  for (const s of sampled) {
+    assert.equal(s.level, 5);
+    assert.equal(s.progress.total, 3, 'levelProgress usa solvedCount sobre os 3 do nível');
+    assert.ok(s.progress.solved >= 0 && s.progress.solved <= 3);
+  }
+  assert.ok(Number.isFinite(res.best));
+  // mazePerGen explícito também funciona SEM curriculum
+  const net = makeNetwork({ seed: 72, nSlots: 8 });
+  const mazes = [maze5, generateMaze(5, 5, 4)];
+  const f = evaluate(net, mazes, { mazePerGen: true, rng: makeRng(3) });
+  assert.ok(Number.isFinite(f));
+  assert.equal(evaluate(net, mazes, { mazePerGen: false }), (runEpisode(net, mazes[0], {}).fitness + runEpisode(net, mazes[1], {}).fitness) / 2);
+});
+
+// ---------------------------------------------------------------------------
+// OPÇÃO B (anti-loop): deteção de ciclos + punição + quebra ativa (research 06-09)
+// ---------------------------------------------------------------------------
+console.log('\n== OPÇÃO B: deteção + punição + tentar outros caminhos ==');
+
+// corredor 7×5 à mão (área aberta 1..5 × 1..3) para trajetórias sintéticas
+function corridorMaze() {
+  const cols = 7, rows = 5;
+  const grid = new Uint8Array(cols * rows).fill(1);
+  for (let y = 1; y <= 3; y++) for (let x = 1; x <= 5; x++) grid[y * cols + x] = 0;
+  return {
+    cols, rows, seed: 0, grid,
+    start: { x: 1, y: 1 }, exit: { x: 5, y: 3 },
+    idx: (x, y) => y * cols + x,
+    isWall: (x, y) => (x < 0 || y < 0 || x >= cols || y >= rows ? true : grid[y * cols + x] === 1),
+  };
+}
+const scripted = (dirs) => { let i = 0; return () => dirs[i++] ?? dirs[dirs.length - 1]; };
+const bot12 = () => makeNetwork({ seed: 5, nSlots: 8 });
+
+check('OPÇÃO B: revisita escalonada p(n) — saturação em 8× e primeira visita grátis', () => {
+  assert.equal(revisitCharge(1), 0, 'primeira visita não paga revisita');
+  assert.equal(revisitCharge(2), -0.005, '2.ª visita = custo atual');
+  assert.equal(revisitCharge(3), -0.005 * 1.6);
+  assert.equal(revisitCharge(4), -0.005 * 1.6 ** 2);
+  assert.equal(revisitCharge(6), -0.005 * 1.6 ** 4);
+  // saturação: piso −0.04 = −0.005·8 a partir de n = 10 (1.6^8 ≈ 43 > 8)
+  assert.equal(revisitCharge(10), -0.005 * 8);
+  assert.equal(revisitCharge(12), -0.005 * 8);
+  assert.equal(revisitCharge(255), -0.005 * 8, 'saturação mantida');
+  // monotonia da magnitude até ao tecto
+  let prev = 0;
+  for (let n = 1; n <= 10; n++) {
+    const c = revisitCharge(n);
+    assert.ok(c <= prev + 1e-15, `p(${n})=${c} devia ser ≤ ${prev}`);
+    prev = c;
+  }
+});
+
+check('OPÇÃO B: detetor — ABAB período 2 detetado em ≤ 3 passos; caminho BFS limpo sem falso positivo', () => {
+  // (a) oscilação ABAB em corredor (vai-e-vem entre (1,1) e (2,1))
+  const g = corridorMaze();
+  const r = runEpisode(bot12(), g, { policy: scripted([3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2]) });
+  assert.ok(r.cycleDetectStep >= 1 && r.cycleDetectStep <= 3,
+    `ABAB devia ser detetado em ≤ 3 passos (detetado no passo ${r.cycleDetectStep})`);
+  assert.equal(r.cycleLen, 2, 'período 2');
+  assert.equal(r.aliased, false, 'ciclo exato de (célula, ação), não aliado');
+  assert.equal(r.repeats, 4, 'contagem de reincidência até à saída antecipada');
+  // (b) caminho BFS limpo (perfeito, células todas distintas) ⇒ ZERO deteções
+  const m5 = generateMaze(5, 5, 3);
+  const p = solveMaze(m5);
+  const dirs = [];
+  for (let k = 1; k < p.length; k++) {
+    const dx = p[k].x - p[k - 1].x, dy = p[k].y - p[k - 1].y;
+    dirs.push(DIR_VEC.findIndex((v) => v[0] === dx && v[1] === dy));
+  }
+  const r2 = runEpisode(bot12(), m5, { policy: scripted(dirs) });
+  assert.equal(r2.solved, true, 'o caminho BFS resolve');
+  assert.equal(r2.cycleDetectStep, 0, 'sem falso positivo em caminho limpo');
+  assert.equal(r2.repeats, 0);
+  assert.equal(r2.looped, false);
+  assert.equal(r2.penaltyCycle, 0);
+  assert.equal(r2.penalty, 0, 'caminho limpo: sem revisitas nem bumps');
+});
+
+check('OPÇÃO B: Trémaux — 1.ª devolução de beco gratuita; oscilação cara', () => {
+  const g = corridorMaze();
+  // (a) entra num beco (R,R,R) e volta (L): a inversão imediata que entra em célula
+  // visitada UMA vez é isenta ⇒ penalty exatamente 0
+  const back = runEpisode(bot12(), g, { policy: scripted([3, 3, 3, 2]), maxSteps: 4 });
+  assert.equal(back.reversals, 1, 'uma inversão imediata');
+  assert.equal(back.revisits, 1, 'uma revisita (a devolução)');
+  assert.equal(back.penalty, 0, 'primeira devolução de beco isenta (Trémaux)');
+  // (b) beco mais longo: a 2.ª revisita paga só a margem base (sem escalada)
+  const back2 = runEpisode(bot12(), g, { policy: scripted([3, 3, 3, 2, 2, 2]), maxSteps: 6 });
+  assert.equal(back2.penalty, 2 * revisitCharge(2), 'devolução longa paga só p(2) por revisita');
+  // (c) oscilação (ABAB): custa SIGNIFICATIVAMENTE mais (reincidência do par + escalada)
+  const osc = runEpisode(bot12(), g, { policy: scripted([3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2]) });
+  assert.ok(osc.reversals > back.reversals, 'oscilação tem mais inversões');
+  assert.ok(osc.penalty < back.penalty - 0.005,
+    `oscilação (${osc.penalty}) tinha de custar mais que backtracking (${back.penalty})`);
+  assert.ok(osc.penalty < 0, 'oscilação com penalidade negativa');
+  assert.ok(osc.penalty + osc.penaltyCycle < back.penalty, 'com ciclos, ainda mais cara');
+});
+
+check('OPÇÃO B: saída antecipada em repeats ≥ 4 (looped, cycleLen, repeats)', () => {
+  const g = corridorMaze();
+  const r = runEpisode(bot12(), g, {
+    policy: scripted([3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2]),
+    maxSteps: 500,
+  });
+  assert.equal(r.looped, true);
+  assert.equal(r.repeats, 4, 'para em repeats = 4');
+  assert.equal(r.cycleLen, 2);
+  assert.ok(r.steps <= 12, `episódio devia terminar cedo (steps=${r.steps} de 500)`);
+  assert.equal(r.solved, false, 'fim antecipado = NÃO resolvido');
+  // punição por volta r: −0.02·min(2^(r−1),8)·cycleLen ⇒ −0.02·(1+2+4+8)·2 = −0.6 (custo)
+  assert.ok(Math.abs(r.penaltyCycle + 0.02 * (1 + 2 + 4 + 8) * 2) < 1e-12,
+    `penaltyCycle=${r.penaltyCycle}`);
+  // guarda lexicográfica vale mesmo para o caso penalizado
+  assert.ok(r.fitness <= 1.2, 'unsolved clampado a ≤ 1.2');
+});
+
+check('OPÇÃO B: histerese anti-período-2 — margem de 8% do intervalo das saídas', () => {
+  const open = new Uint8Array([1, 1, 1, 1]);
+  const cells = new Int32Array([10, 11, 12, 13]);
+  // melhor muda de 1 para 2 mas por MENOS de 8% do intervalo (0.5−0=0.5, margem 0.04)
+  const yKeep = new Float32Array([0, 0.49, 0.5, 0]);
+  assert.equal(pickDir(yKeep, 1, open, cells), 1, 'sem margem suficiente ⇒ mantém a ação anterior');
+  // margem suficiente (0.5 ≥ 0.40+0.04) ⇒ troca
+  const ySwitch = new Float32Array([0, 0.4, 0.5, 0]);
+  assert.equal(pickDir(ySwitch, 1, open, cells), 2, 'com margem ⇒ troca para a melhor');
+  // limite (margem mínima satisfeita de forma robusta a arredondamento float) ⇒ troca
+  const yEdge = new Float32Array([0, 0.459, 0.5, 0]);
+  assert.equal(pickDir(yEdge, 1, open, cells), 2, 'margem satisfeita ⇒ troca');
+  // salta a histerese se a ação anterior colide
+  const openWall = new Uint8Array([1, 0, 1, 1]);
+  assert.equal(pickDir(yKeep, 1, openWall, cells), 2, 'colisão da ação anterior ⇒ salta a histerese');
+  // sem ação anterior (1.º passo) ⇒ argmax puro
+  assert.equal(pickDir(yKeep, null, open, cells), 2);
+  assert.equal(pickDir(yKeep, 2, open, cells), 2, 'melhor igual à anterior ⇒ fica');
+  // QUEBRA ATIVA: força a 2.ª melhor; salta paredes e a célula proibida
+  const y4 = new Float32Array([0.9, 0.5, 0.3, 0.1]);
+  assert.equal(pickDir(y4, null, open, cells, true), 1, 'força a 2.ª melhor direção');
+  assert.equal(pickDir(y4, null, openWall, cells, true), 2, '2.ª melhor é parede ⇒ a seguinte');
+  assert.equal(pickDir(y4, null, open, cells, true, cells[1]), 2, 'célula que iniciou o ciclo é proibida');
+});
+
+check('OPÇÃO B: guarda lexicográfica no runEpisode (solved ≥ 1.25 > unsolved ≤ 1.2)', () => {
+  for (let seed = 1; seed <= 25; seed++) {
+    const m = generateMaze(5, 5, seed);
+    const net = makeNetwork({ seed: seed * 13, nSlots: 8 });
+    for (const opts of [{}, { antiLoop: false }, { maxSteps: 30 }, { maxSteps: 30, antiLoop: false }]) {
+      const r = runEpisode(net, m, opts);
+      if (r.solved) assert.ok(r.fitness >= 1.25, `solved ${r.fitness} < 1.25 (seed ${seed})`);
+      else assert.ok(r.fitness <= 1.2, `unsolved ${r.fitness} > 1.2 (seed ${seed})`);
+      assert.ok(Number.isFinite(r.fitness));
+    }
+  }
+});
+
+check('OPÇÃO B: anti-aliasing — quantização 4 bits + campo aliased (plumbing)', () => {
+  // (1) quantSig: igualdade de buffers ⇒ igual hash; 4 bits/valor ⇒ variações abaixo
+  // do passo de quantização colapsam (é EXATAMENTE o aliasing que o 2.º detetor cobre).
+  const a = new Float32Array(12).fill(0.5);
+  const b = new Float32Array(12).fill(0.5);
+  assert.equal(quantSig(a), quantSig(b), 'buffers iguais ⇒ assinatura igual');
+  const c = new Float32Array(12).fill(0.501); // passo 4 bits = 1/16 = 0.0625
+  assert.equal(quantSig(a), quantSig(c), 'variação < 1/16 colapsa (aliasing perceptual)');
+  const d = new Float32Array(12).fill(0.5 + 0.07);
+  assert.notEqual(quantSig(a), quantSig(d), 'variação > 1/16 muda de balde');
+  // (2) num ciclo EXATO (célula,ação) o detetor principal atua primeiro ⇒ aliased false
+  const g = corridorMaze();
+  const r = runEpisode(bot12(), g, { policy: scripted([3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2]) });
+  assert.equal(r.aliased, false, 'ciclo exato não é contado como aliado');
+  assert.equal(typeof r.aliased, 'boolean');
+  // (3) num caminho limpo não há deteção aliada
+  const m5 = generateMaze(5, 5, 3);
+  const p = solveMaze(m5);
+  const dirs = [];
+  for (let k = 1; k < p.length; k++) {
+    const dx = p[k].x - p[k - 1].x, dy = p[k].y - p[k - 1].y;
+    dirs.push(DIR_VEC.findIndex((v) => v[0] === dx && v[1] === dy));
+  }
+  const r2 = runEpisode(bot12(), m5, { policy: scripted(dirs) });
+  assert.equal(r2.aliased, false, 'sem falso positivo aliado em caminho limpo');
+  // NOTA: trajetória sintética com assinatura periódica e (célula,ação) não-periódica
+  // não foi construída dentro do orçamento (ver IMPLEMENTACAO-B.md — limitações);
+  // o ramos aliased está coberto aqui + telemetria do probe A/B.
+});
+
+check('OPÇÃO B: antiLoop:false = modo legado (plano, sem deteção/histerese)', () => {
+  const g = corridorMaze();
+  const r = runEpisode(bot12(), g, {
+    policy: scripted([3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 2]),
+    maxSteps: 40,
+    antiLoop: false,
+  });
+  assert.equal(r.looped, false, 'sem deteção no legado');
+  assert.equal(r.cycleDetectStep, 0);
+  assert.equal(r.penaltyCycle, 0);
+  assert.equal(r.bonus, 0);
+  assert.equal(r.steps, 40, 'legado corre até maxSteps (sem saída antecipada)');
+  assert.ok(r.penalty < 0, 'revisitas planas −0.005 acumulam');
 });
 
 // ---------------------------------------------------------------------------
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed ? 1 : 0);
+

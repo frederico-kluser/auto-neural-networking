@@ -64,13 +64,23 @@ worker.addEventListener('message', (ev) => {
       nNeurons: s.nNeurons, nConns: s.nConns,
       bankStats: bankStatsFrom(s), history,
       solvedCount: s.solvedCount ?? 0, mazeCount: s.mazeCount ?? 0,
+      level: s.level ?? msg.level ?? 0,
+      levelProgress: s.levelProgress ?? null,
+      targetSize: s.targetSize ?? msg.targetSize ?? 0,
+      elapsedMs: s.elapsedMs ?? msg.elapsedMs ?? 0,
     });
   } else if (msg.type === 'best') {
     championNet = msg.net;
     rebuildPlayers();
   } else if (msg.type === 'done') {
     const solved = !!(msg.summary && msg.summary.solved);
-    store.set({ training: 'idle', solved, stopReason: solved ? 'solved' : 'limit' });
+    const reason = msg.summary?.reason ?? (solved ? 'solved' : 'limit');
+    store.set({
+      training: 'idle',
+      solved,
+      stopReason: reason === 'error' ? 'limit' : reason, // 'solved' | 'time' | 'limit'
+      elapsedMs: msg.summary?.elapsedMs ?? store.get().elapsedMs ?? 0,
+    });
   }
 });
 
@@ -187,7 +197,9 @@ function stepPlayer(p) {
 }
 
 function frame(now) {
-  const n = SPEED_STEPS[store.get().speed] ?? 1;
+  const st = store.get();
+  // PAUSAR trava TUDO: nem episódios avançam (a animação congela com o treino)
+  const n = st.training === 'paused' ? 0 : (SPEED_STEPS[st.speed] ?? 1);
   for (let i = 0; i < n; i++) for (const p of players) stepPlayer(p);
   pushAgents();
   const p0 = players[0];
@@ -234,7 +246,8 @@ function readConfig() {
     seed: Math.max(0, num('#ctrl-seed', 1)),
     elite: 6,
     mutationRate: 0.9,
-    memoryMode: store.get().memoryMode ?? 'sinapses',
+    memoryMode: 'sinapses', // E19: fixo; o worker ignora qualquer valor
+    timeLimitMs: store.get().timeLimitMs ?? 1800000, // E20: 0 = sem limite
   };
 }
 
@@ -264,6 +277,7 @@ const actions = {
       training: 'idle', generation: 0, bestFitness: 0, meanFitness: 0,
       nNeurons: 0, nConns: 0, bankStats: {}, history: [],
       solved: false, solvedCount: 0, mazeCount: 0, stopReason: null,
+      level: 0, levelProgress: null, elapsedMs: 0,
     });
     regenerateMaze();
   },

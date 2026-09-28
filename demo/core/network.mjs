@@ -10,6 +10,32 @@
 //
 // EMENDA v5/E12: alphaJ (Float64Array(nSlots)) — vazamento POR NEURÓNIO; 0 = usar
 // net.alpha (default). O neurónio de memória (ops.addMemoryNeuron) força alphaJ=0.05.
+//
+// EMENDA v6/E16 (memória com horizonte certo + performance):
+//   · makeNetwork aceita `memoryHorizon` (ticks) e deriva fastLambda = exp(−1/H);
+//     um `fastLambda` explícito tem SEMPRE prioridade (compatibilidade E11, default 0.92).
+//   · O update de F itera APENAS sobre a lista CACHE de índices (i,j) mascarados
+//     (reconstruída quando M muda — ops chamam invalidateMaskCache; resetNet e
+//     ensureCapacity também; deteta-se ainda realocação de M por identidade).
+//     O somatório recorrente usa o MESMO cache (ordem de acumulação por coluna idêntica
+//     ao loop ingénuo ⇒ resultados bitwise idênticos).
+//
+// REORIENTAÇÃO v7 (2026-09-27, do utilizador) — MEMÓRIA QUE SE CONSTRÓI SOZINHA:
+//   · Só existem as 12 entradas nomeadas (o modo 'mapa'/'ambos' está extinto na demo);
+//     aqui mantém-se apenas a mecânica interna, sem nada que dependa do mapa.
+//   · As sinapses registam o HISTÓRICO DE DECISÕES. Unidade de DECISÃO = neurónio vivo
+//     que alimenta o readout (alguma M_out[j][i]===1) — "o h que alimenta o readout conta
+//     como decisão". Com d_j = dec_j·h_j a regra de F passa a:
+//       F_ij ← clip(λ·F_ij + η·(h_i·h_j + h_i·d_j + d_i·h_j), ±2)
+//     (= η·h_i·h_j·(1 + dec_i + dec_j): cada sinapse que toca numa unidade de decisão
+//     acumula também atividade-decisão; sinapses entre não-decisão mantêm a regra E11).
+//   · Cadeia "decisão → sinapse → memória": a decisão (h que alimenta o readout) co-ativa
+//     as sinapses (termo h_i·d_j / d_i·h_j em F) e a sinapse guarda essa co-ocorrência
+//     durante ~H ticks (λ = exp(−1/H)); addConn/addNeuron/addMemoryNeuron MUDAM a
+//     topologia (a sinapse "surge"), perturbWeights ativa pesos nascidos a 0 e o F torna
+//     a ligação funcional de imediato — ver ops.mjs.
+//   · step() defende entradas em falta (inputArr[k] === undefined ⇒ 0), para que redes
+//     guardadas com outra aritmética de entradas nunca infecionem o estado com NaN.
 
 export const MAX_SLOTS = 256;
 
@@ -24,10 +50,18 @@ function mulberry32(seed) {
   };
 }
 
-export function makeNetwork({ nInputs = 12, nOutputs = 4, seed = 1, nSlots = 32, fastOn = true } = {}) {
+/**
+ * EMENDA v6/E16: `memoryHorizon` (ticks) deriva `fastLambda = exp(−1/memoryHorizon)`.
+ * Precedência EXATA: (1) `fastLambda` explícito ganha sempre (compatibilidade);
+ * (2) `memoryHorizon` finito > 0 ⇒ λ = exp(−1/H); (3) caso contrário default E11 (0.92).
+ */
+export function makeNetwork({ nInputs = 12, nOutputs = 4, seed = 1, nSlots = 32, fastOn = true, memoryHorizon, fastLambda } = {}) {
   const nIn = Math.max(1, Math.floor(nInputs));
   const nOut = Math.max(1, Math.floor(nOutputs));
   const cap = Math.min(MAX_SLOTS, Math.max(1, Math.floor(nSlots)));
+  let lam = 0.92;
+  if (fastLambda !== undefined) lam = fastLambda;
+  else if (memoryHorizon !== undefined && Number.isFinite(memoryHorizon) && memoryHorizon > 0) lam = Math.exp(-1 / memoryHorizon);
   const net = {
     nIn,
     nOut,
@@ -46,7 +80,7 @@ export function makeNetwork({ nInputs = 12, nOutputs = 4, seed = 1, nSlots = 32,
     b_out: new Float64Array(nOut),
     // E11: pesos rápidos (memória estrutural do episódio corrente)
     F: new Float64Array(cap * cap),
-    fastLambda: 0.92,
+    fastLambda: lam,
     fastEta: 0.35,
     fastOn: fastOn !== false, // defeito: LIGADO, salvo opts.fastOn === false
   };
@@ -66,6 +100,40 @@ export function makeNetwork({ nInputs = 12, nOutputs = 4, seed = 1, nSlots = 32,
     net.W_out[i] = rand() - 0.5;
   }
   return net;
+}
+
+// ── EMENDA v6/E16: cache das máscaras (índices mascarados + máscara de decisão) ──
+// O update de F e o somatório recorrente iteram SÓ os índices (i,j) com M=1 guardados
+// em `net._masks.rec`; o drive itera só os (k,j) com M_in=1 (`net._masks.inp`); a
+// regra v7 de F usa `net._masks.dec` (1 = unidade de decisão, alimenta o readout).
+// O cache é invalidado por invalidateMaskCache(net) — chamado por ops.mjs (applyOp),
+// resetNet e ensureCapacity — e reconstruído preguiçosamente no próximo step().
+// Mutação DIRETA de M/M_in/M_out fora daí exige invalidateMaskCache(net) explícito
+// (a identidade dos typed arrays deteta realocação, não escritas no lugar).
+function masksOf(net) {
+  const m = net._masks;
+  if (m && m.M === net.M && m.M_in === net.M_in && m.M_out === net.M_out && m.n === net.nSlots) return m;
+  const n = net.nSlots;
+  const rec = [];
+  for (let p = 0; p < net.M.length; p++) if (net.M[p]) rec.push(p);
+  const inp = [];
+  for (let p = 0; p < net.M_in.length; p++) if (net.M_in[p]) inp.push(p);
+  const dec = new Uint8Array(n); // v7: 1 = alimenta o readout (unidade de DECISÃO)
+  for (let j = 0; j < n; j++) {
+    const row = j * net.nOut;
+    for (let i = 0; i < net.nOut; i++) {
+      if (net.M_out[row + i]) { dec[j] = 1; break; }
+    }
+  }
+  const built = { rec: Int32Array.from(rec), inp: Int32Array.from(inp), dec, M: net.M, M_in: net.M_in, M_out: net.M_out, n };
+  net._masks = built;
+  return built;
+}
+
+// Invalida o cache de máscaras (E16). Chamar sempre que M/M_in/M_out mudarem por fora
+// de applyOp/ensureCapacity/resetNet. Idempotente e segura em qualquer objeto net.
+export function invalidateMaskCache(net) {
+  if (net) net._masks = null;
 }
 
 // EMENDA v2/E1: garante `need` slots livres, crescendo nSlots sozinho (duplicação, mínimo
@@ -125,6 +193,7 @@ export function ensureCapacity(net, need = 1) {
     net.M_in = M_in;
     net.W_out = W_out;
     net.M_out = M_out;
+    invalidateMaskCache(net); // E16: stride novo ⇒ índices em cache inválidos
   }
   return true;
 }
@@ -132,52 +201,64 @@ export function ensureCapacity(net, need = 1) {
 export function resetNet(net) {
   net.h.fill(0);
   if (net.F) net.F.fill(0); // E11: a memória rápida é do episódio corrente — zera sempre
+  invalidateMaskCache(net); // E16: robustez contra escritas diretas em M entre episódios
   return net;
 }
 
 export function step(net, inputArr) {
   const { nIn, nOut, nSlots: n, alive, W, M, b, alpha, alphaJ, h, W_in, M_in, W_out, M_out, b_out, F } = net;
-  // E11: sinapses rápidas só quando ligadas (memoryMode 'mapa' desliga-as).
+  // E11: sinapses rápidas só quando ligadas (modo 'mapa' legado desligava-as).
   const useFast = net.fastOn !== false && !!F;
-  const drive = new Float64Array(n);
-  for (let j = 0; j < n; j++) {
+  const masks = masksOf(net); // E16/v7: cache de índices mascarados + máscara de decisão
+  // Buffers de trabalho persistentes (E18: zero alocação por tick).
+  const drive = net._drive && net._drive.length === n ? net._drive : (net._drive = new Float64Array(n));
+  const rec0 = net._rec && net._rec.length === n ? net._rec : (net._rec = new Float64Array(n));
+  // drive_j = Σ_k in[k]·W_in[k][j]·M_in[k][j] + b_j (só j vivo). A ordem de soma por j
+  // (b_j primeiro, k crescente depois) é a do contrato — bitwise idêntica ao loop ingénuo.
+  for (let j = 0; j < n; j++) drive[j] = alive[j] ? b[j] : 0;
+  const inp = masks.inp;
+  for (let c = 0; c < inp.length; c++) {
+    const p = inp[c];
+    const j = p % n;
     if (!alive[j]) continue;
-    let d = b[j];
-    for (let k = 0; k < nIn; k++) {
-      const p = k * n + j;
-      if (M_in[p]) d += inputArr[k] * W_in[p];
-    }
-    drive[j] = d;
+    const k = (p / n) | 0;
+    const v = inputArr[k];
+    if (v === undefined) continue; // v7: entradas em falta contam como 0 (sem NaN)
+    drive[j] += v * W_in[p];
   }
-  // Atualização síncrona: soma recorrente usa o h antigo. Onde M=1 o peso efetivo
-  // é W+F (E11) — em QUALQUER uso mascarado de W dentro do tick.
-  const nh = new Float64Array(n);
+  // Soma recorrente sobre o h ANTIGO, só entradas mascaradas (W+F quando useFast).
+  // Acumulação em ordem de i crescente por coluna ⇒ idêntica ao loop ingénuo.
+  const rec = masks.rec;
+  for (let j = 0; j < n; j++) rec0[j] = 0;
+  for (let c = 0; c < rec.length; c++) {
+    const p = rec[c];
+    const i = (p / n) | 0;
+    const j = p - i * n;
+    rec0[j] += h[i] * (useFast ? W[p] + F[p] : W[p]);
+  }
+  // Atualização síncrona in-place: cada j só lê o SEU h antigo (r e drive já são finais).
   for (let j = 0; j < n; j++) {
     if (!alive[j]) { h[j] = 0; continue; }
-    let r = 0;
-    const col = j;
-    for (let i = 0; i < n; i++) {
-      const p = i * n + col;
-      if (M[p]) r += h[i] * (useFast ? W[p] + F[p] : W[p]);
-    }
     const a = alphaJ && alphaJ[j] > 0 ? alphaJ[j] : alpha; // E12: leak por neurónio (0 = net.alpha)
-    nh[j] = (1 - a) * h[j] + a * Math.tanh(r + drive[j]);
+    h[j] = (1 - a) * h[j] + a * Math.tanh(rec0[j] + drive[j]);
   }
-  h.set(nh);
-  // E11: atualização Hebbiana das sinapses rápidas DEPOIS de calcular h (usa o h novo),
-  // só nas entradas mascaradas: F_ij ← clip(λ·F_ij + η·h_i·h_j, ±2).
+  // E11+v7: atualização Hebbiana das sinapses rápidas DEPOIS de calcular h (usa o h novo),
+  // só nas entradas mascaradas. v7: a regra inclui a atividade das unidades de DECISÃO
+  // d_k = dec_k·h_k — F_ij ← clip(λ·F_ij + η·(h_i·h_j + h_i·d_j + d_i·h_j), ±2).
   if (useFast) {
     const lam = net.fastLambda;
     const eta = net.fastEta;
-    for (let i = 0; i < n; i++) {
+    const dec = masks.dec;
+    for (let c = 0; c < rec.length; c++) {
+      const p = rec[c];
+      const i = (p / n) | 0;
+      const j = p - i * n;
       const hi = h[i];
-      const row = i * n;
-      for (let j = 0; j < n; j++) {
-        const p = row + j;
-        if (!M[p]) continue;
-        const v = lam * F[p] + eta * hi * h[j];
-        F[p] = v > 2 ? 2 : v < -2 ? -2 : v;
-      }
+      const hj = h[j];
+      const di = dec[i] ? hi : 0;
+      const dj = dec[j] ? hj : 0;
+      const v = lam * F[p] + eta * (hi * hj + hi * dj + di * hj);
+      F[p] = v > 2 ? 2 : v < -2 ? -2 : v;
     }
   }
   const y = new Float32Array(nOut);
@@ -213,6 +294,7 @@ export function cloneNet(net) {
     fastLambda: net.fastLambda, // E11: parâmetros rápidos copiados
     fastEta: net.fastEta,
     fastOn: net.fastOn,
+    // E16: o cache de máscaras NÃO é copiado — reconstrói-se preguiçosamente por clone.
   };
 }
 

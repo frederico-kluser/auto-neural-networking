@@ -441,3 +441,73 @@ Base literária (pesquisa de hoje):
 - **Reprodução dupla** [R + integração]: `maze3d` ganha `updateAgents([{x,y,path,sensors,visited,
   color}])` (2 agentes: A âmbar #F5B04A, B azul-pálido #8FB8DA); a vista labirinto mostra os dois a
   jogar o MESMO labirinto ao mesmo tempo, cada um com o seu treino. Etiquetas de estado por agente.
+
+---
+
+# EMENDA v6 (2026-09-27) — MEMÓRIA QUE DURA + TREINO ATÉ 31×31
+
+Diagnóstico (medido + literatura): (1) fastLambda=0.92 ⇒ horizonte de memória ~12 ticks — inútil
+num episódio de 1922 passos (31×31); traces têm de ter decay casado com o horizonte da tarefa
+(Sutton, Eligibility Traces; "behavioral state decay"); (2) fitness por Manhattan é enganador
+atrás de paredes ⇒ usar potencial BFS (Ng et al. 1999: shaping por potencial preserva a política
+ótima; NeurIPS "Keeping Your Distance" sobre ótimos locais de shaping ingénuo); (3) 31×31 direto
+não converge ⇒ curriculum easiest→hardest (CURATE; NeurIPS 2022 Curriculum RL); (4) populações
+maiores + diversidade ajudam em tarefas enganadoras (NEAT/speciation; TensorNEAT).
+
+## E15. Fitness por potencial BFS (core/evolution.mjs) [S]
+
+- Por labirinto, pré-calcular `distField: Int32Array(cols*rows)` (BFS do exit sobre células abertas).
+- Fitness (substitui progresso de Manhattan):
+  - resolvido: `1.5 + (1 − steps/maxSteps) + 0.5*(visited/openCells)` (inalterado);
+  - não resolvido: `2*(dist(start) − dist(end))/dist(start) − steps*0.002 + 0.25*(visited/openCells)`
+    (progresso POTENCIAL BFS; cobertura mantém incentivo à exploração).
+  - `fitnessOf` ganha `startDist/endDist` em DISTÂNCIA BFS (a função é a mesma; os argumentos passam
+    a ser BFS).
+
+## E16. Memória com horizonte certo (core/network.mjs) [S]
+
+- `fastLambda` passa a ser derivado de um `memoryHorizon` (ticks): `λ = exp(−1/H)`, `H` por defeito
+  `min(800, max(60, 2*openCells))` definido em `evolve`/worker consoante o labirinto (31×31 ⇒ λ≈0,994).
+- `makeNetwork` aceita `memoryHorizon` (calcula λ) OU `fastLambda` direto (compatibilidade).
+- Otimização: o update de F itera APENAS sobre índices mascarados em CACHE (reconstruído quando M
+  muda), não sobre nSlots² por tick.
+
+## E17. Curriculum automático até ao tamanho alvo (core/evolution.mjs + worker + UI) [S, T]
+
+- `evolve` aceita `curriculum: { targetSize, startSize=5 }` (só tamanhos ímpares). Os labirintos de
+  treino começam em `startSize` e SOBEM de nível quando o campeão resolve os 3 do nível atual
+  (5→7→…→targetSize); cada subida: novos labirintos do tamanho seguinte, burst de neurogénese e
+  a POPULAÇÃO é mantida (transferência). Nível máximo = targetSize; vencer aí = RESOLVIDO.
+- `hooks.onGeneration` stats ganham `level` (tamanho atual) e `levelProgress` (resolvidos/total do
+  nível). `evolve` devolve `finalLevel`.
+- Worker: `config.memoryMode` + `config.curriculum` (targetSize = config.mazeSize); UI mostra o
+  nível atual na linha de progresso ("a treinar em 7×7 · alvo 31×31 · nível 3/14").
+
+## E18. Otimizações de desempenho do treino [S]
+
+- `senseInto(out, maze, x, y, visited, opts)` (sem alocação por passo); `sense` mantém-se (aloca).
+- `evaluate` ganha `opts.mazePerGen`: cada indivíduo é avaliado em 1 labirinto rotativo por geração
+  (3× mais rápido); o campeão é sempre reavaliado em TODOS para o critério de vitória/nível.
+- Budget: 31×31 com curriculum tem de chegar a RESOLVIDO num tempo utilizável (aceitação).
+
+---
+
+# EMENDA v7 (2026-09-27) — DIRETRIZES DO UTILIZADOR (prevalecem sobre v2-v6)
+
+## E19. Sem dados de casas — memória 100% construída pela rede
+
+- Os agentes NÃO recebem o mapa do labirinto nem qualquer entrada por célula. Entradas: APENAS os
+  12 sinais (0..3 paredes, 4..7 saída visível, 8..11 fração de visitadas por direção). O modo
+  'mapa'/'ambos' fica extinto na UI e no worker (código de teste do withMap pode permanecer dormente).
+- A memória de decisões anteriores tem de viver na rede: sinapses que SURGEM e se LIGAM
+  (addConn/addNeuron/addMemoryNeuron + F Hebbiana sobre a atividade das unidades de decisão).
+  A cadeia a documentar e verificar: DECISÃO (h que alimenta o readout) → SINAPSE (F acumula
+  co-atividade; mutações estruturais criam ligações) → MEMÓRIA (neurónios persistentes + F com
+  horizonte adequado) → DECISÃO seguinte informada pelo passado.
+
+## E20. Limite de tempo no treino
+
+- O treino ganha "limite de tempo (minutos)" (0 = sem limite; default 30) ao lado do limite de
+  épocas. Excedido: o worker termina com `summary.reason: 'time'` e entrega o MELHOR até agora.
+  `done.summary.reason` passa a ser 'solved' | 'time' | 'limit' | 'error'. A linha de progresso
+  mostra o tempo decorrido ("a treinar há 12 min").

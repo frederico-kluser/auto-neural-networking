@@ -1,11 +1,11 @@
 {
-  "when": "2026-09-27T00:16:55.612Z",
+  "when": "2026-09-27T09:42:49.662Z",
   "passed": 28,
   "total": 28,
   "failures": 0,
   "perf": {
-    "ticksPerSec": 193200,
-    "episodesPerSec": 2217
+    "ticksPerSec": 1333225,
+    "episodesPerSec": 12167
   },
   "results": [
     {
@@ -21,27 +21,27 @@
     {
       "name": "maze 9x9: fronteira fechada, start/exit abertos, solucionável",
       "ok": true,
-      "detail": "caminho 21 células"
+      "detail": "caminho 13 células"
     },
     {
       "name": "maze 11x11: fronteira fechada, start/exit abertos, solucionável",
       "ok": true,
-      "detail": "caminho 25 células"
+      "detail": "caminho 21 células"
     },
     {
       "name": "maze 15x15: fronteira fechada, start/exit abertos, solucionável",
       "ok": true,
-      "detail": "caminho 45 células"
+      "detail": "caminho 37 células"
     },
     {
       "name": "maze 21x21: fronteira fechada, start/exit abertos, solucionável",
       "ok": true,
-      "detail": "caminho 61 células"
+      "detail": "caminho 37 células"
     },
     {
       "name": "maze 31x31: fronteira fechada, start/exit abertos, solucionável",
       "ok": true,
-      "detail": "caminho 117 células"
+      "detail": "caminho 97 células"
     },
     {
       "name": "maze: determinismo por seed e variação entre seeds",
@@ -106,7 +106,7 @@
     {
       "name": "ops: 400 operações aleatórias preservam invariantes e o caminho I/O",
       "ok": true,
-      "detail": "398/400 aplicadas"
+      "detail": "399/400 aplicadas"
     },
     {
       "name": "ops: banco adaptativo mantém P_min e probabilidades somam 1",
@@ -121,7 +121,7 @@
     {
       "name": "runEpisode: determinismo, terminação e sensorTrace",
       "ok": true,
-      "detail": "solved=false steps=60 fitness=-0.405"
+      "detail": "solved=false steps=25 fitness=-0.656"
     },
     {
       "name": "solvedCount: conta labirintos resolvidos (critério de paragem)",
@@ -131,22 +131,22 @@
     {
       "name": "evolução: aprende em 5x5 (resolve e a média da população sobe)",
       "ok": true,
-      "detail": "best 2.777→2.777 · mean -0.149→2.269"
+      "detail": "best 2.300→2.440 · mean 0.663→2.165"
     },
     {
       "name": "evolução: melhora o melhor em 7x7 (tarefa mais dura, sem saturar)",
       "ok": true,
-      "detail": "best 0.833→0.833 · mean -0.584→0.651"
+      "detail": "best 2.338→2.390 · mean -0.355→2.376"
     },
     {
       "name": "performance: ≥ 20 000 ticks de rede/segundo em Node",
       "ok": true,
-      "detail": "193200 ticks/s"
+      "detail": "1333225 ticks/s"
     },
     {
       "name": "performance: ≥ 50 episódios/segundo em labirinto 5x5",
       "ok": true,
-      "detail": "2217 episódios/s"
+      "detail": "12167 episódios/s"
     }
   ]
 }

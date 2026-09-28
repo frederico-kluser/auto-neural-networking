@@ -9,6 +9,12 @@
  *     (intro | progresso | vitória | limite) a partir das chaves do store;
  *     escuta o evento 'ann-goal-notice' (de ui/controls.js) para o aviso curto
  *     "desafio novo: a contar do zero";
+ *   - EMENDA v6/E17: segunda linha do curriculum (#goal-curriculum), só enquanto
+ *     treina: "a treinar em 7×7 · alvo 31×31 · nível 3/14" a partir das chaves
+ *     level/levelProgress/targetSize do store (tolera ausência: sem dados ou em
+ *     introdução/vitória/limite a linha fica oculta). O índice "nível k/N" sai de
+ *     level/targetSize com início em 5 (5, 7, 9, ...); com um só nível mostra
+ *     apenas "a treinar em 7×7";
  *   - chip de estado, contador de época do topo, contadores, mutações em ensaio,
  *     "o que a rede vê" (12 sinais agrupados + 4 saídas) e sparkline de evolução;
  *   - EMENDA v5/E14: lista "treinos guardados" (#saved-list) a partir de
@@ -26,7 +32,12 @@
  *   history (array de { gen, best, mean }; pode faltar ou ser curta),
  *   solved (bool; chip "resolvido" com prioridade sobre training),
  *   solvedCount, mazeCount (contador "resolvidos" em #stat-solved),
- *   stopReason ('solved' | 'limit' | null; motivo de paragem, nunca silencioso),
+ *   stopReason ('solved' | 'limit' | 'time' | null; motivo de paragem, nunca
+ *   silencioso; 'time' mostra a mensagem do limite de tempo),
+ *   level, levelProgress, targetSize (E17: percurso do curriculum; número,
+ *   { solved, total } | null e número; todos toleram ausência),
+ *   elapsedMs (tempo de treino decorrido em ms: "a treinar há 12 min" na linha
+ *   de progresso; omite sem dados),
  *   savedTrainings, selectedTrainingIds, mazeSize (lista de treinos guardados:
  *   compatibilidade de reprodução depende do tamanho do labirinto atual).
  *
@@ -93,11 +104,16 @@ const num = (v) => {
   return Number.isFinite(n) ? n : 0;
 };
 
-/** "resolvidos": "2/3" a partir de solvedCount/mazeCount; null sem dados. */
+/** "resolvidos": "2/3" a partir de solvedCount/mazeCount (ou levelProgress, E17); null sem dados. */
 function solvedCounts(s) {
-  const has = s.solvedCount != null && s.mazeCount != null;
-  const sc = has ? Number(s.solvedCount) : NaN;
-  const mc = has ? Number(s.mazeCount) : NaN;
+  let sc = Number(s.solvedCount);
+  let mc = Number(s.mazeCount);
+  if (!(Number.isFinite(sc) && Number.isFinite(mc) && mc > 0)) {
+    // sem contagens válidas: levelProgress (E17) alimenta o mesmo contador
+    const lp = s.levelProgress && typeof s.levelProgress === 'object' ? s.levelProgress : null;
+    sc = Number(lp ? lp.solved : NaN);
+    mc = Number(lp ? lp.total : NaN);
+  }
   if (Number.isFinite(sc) && Number.isFinite(mc) && mc > 0) {
     return `${Math.max(0, Math.trunc(sc))}/${Math.max(0, Math.trunc(mc))}`;
   }
@@ -240,6 +256,7 @@ export function mountStats(store) {
   const elSolved = $('episode-solved');
   const goalBanner = $('goal-banner');
   const goalProgress = $('goal-progress');
+  const goalCurriculum = $('goal-curriculum'); // E17 (pode não existir: tolerado)
   const elSpark = $('spark-fitness');
   const statGen = $('stat-generation');
   const statBest = $('stat-fitness-best');
@@ -399,6 +416,36 @@ export function mountStats(store) {
   const TXT_INTRO = 'clica em Treinar e observa a rede evoluir até vencer';
   const TXT_LIMIT =
     'limite de épocas atingido: a rede ainda não venceu. Aumente o limite em definições avançadas ou use um labirinto menor.';
+  const TXT_TIME = 'limite de tempo atingido: a rede ainda não venceu. Aumente o limite de tempo para continuar.';
+
+  // E17: o treino sobe 5→7→9→…→targetSize; o índice "nível k/N" sai daqui.
+  const CURRICULUM_START = 5;
+
+  /**
+   * Tempo decorrido em minutos inteiros (mínimo 1 enquanto corre) para
+   * "a treinar há 12 min". null sem dados (elapsedMs ausente ou a zero).
+   */
+  function elapsedMinutes(msRaw) {
+    const ms = Number(msRaw);
+    if (!Number.isFinite(ms) || ms <= 0) return null;
+    return Math.max(1, Math.round(ms / 60000));
+  }
+
+  /**
+   * Linha do curriculum em pt-PT: "a treinar em 7×7 · alvo 31×31 · nível 3/14".
+   * Com um só nível (alvo 5×5) fica "a treinar em 5×5". null quando não há
+   * dados (level/targetSize ausentes ou a zero: nunca fabrica números).
+   */
+  function curriculumLine(s) {
+    const level = Math.trunc(num(s.level));
+    const target = Math.trunc(num(s.targetSize));
+    if (!(level > 0) || !(target > 0)) return null;
+    const size = `${fmtInt(level)}\u00d7${fmtInt(level)}`;
+    const count = Math.trunc((target - CURRICULUM_START) / 2) + 1;
+    if (!(count > 1)) return `a treinar em ${size}`;
+    const idx = Math.min(count, Math.max(1, Math.trunc((level - CURRICULUM_START) / 2) + 1));
+    return `a treinar em ${size} \u00b7 alvo ${fmtInt(target)}\u00d7${fmtInt(target)} \u00b7 n\u00edvel ${fmtInt(idx)}/${fmtInt(count)}`;
+  }
 
   function renderGoal(s) {
     if (!goalBanner || !goalProgress) return;
@@ -409,9 +456,9 @@ export function mountStats(store) {
     if (s.solved === true && s.stopReason === 'solved' && hasRun) {
       st = 'solved';
       txt = `desafio vencido em ${fmtInt(g)} ${g === 1 ? 'época' : 'épocas'}`;
-    } else if (s.stopReason === 'limit' && s.training === 'idle' && hasRun) {
+    } else if ((s.stopReason === 'limit' || s.stopReason === 'time') && s.training === 'idle' && hasRun) {
       st = 'limit';
-      txt = TXT_LIMIT;
+      txt = s.stopReason === 'time' ? TXT_TIME : TXT_LIMIT;
     } else if (!hasRun && s.training === 'idle') {
       st = 'intro';
       txt = TXT_INTRO;
@@ -419,11 +466,21 @@ export function mountStats(store) {
       st = 'progress';
       const counts = solvedCounts(s);
       txt = `época ${fmtInt(g)} · resolvidos ${counts != null ? counts : '-'} · melhor resultado ${g > 0 ? fmt2(s.bestFitness) : '-'}`;
+      // tempo decorrido de treino: "a treinar há 12 min" (sem dados: omite)
+      const mins = elapsedMinutes(s.elapsedMs);
+      if (mins != null) txt += ` · a treinar há ${fmtInt(mins)} min`;
     }
     if (noticeText) txt = noticeText; // aviso curto no texto de progresso
     setFlag(goalBanner, 'data-state', st);
     setFlag(goalBanner, 'data-notice', noticeText ? 'true' : 'false');
     setText(goalProgress, txt);
+    // E17: segunda linha com o percurso do curriculum, só enquanto treina e sem
+    // aviso ativo (a vitória e a introdução ficam exatamente como eram).
+    const cur = st === 'progress' && !noticeText ? curriculumLine(s) : null;
+    if (goalCurriculum) {
+      goalCurriculum.hidden = cur == null;
+      setText(goalCurriculum, cur == null ? '' : cur);
+    }
   }
 
   // ---- lista de treinos guardados (E14) ----

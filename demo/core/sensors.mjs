@@ -18,8 +18,9 @@ export const SENSOR_NAMES = ['parede↑', 'parede↓', 'parede←', 'parede→',
  * EMENDA v5/E13: `sense(maze, x, y, visited = null, opts = {})`.
  * - `opts.withMap === true` → Float32Array(12 + cols*rows) (mapa E7 no fim);
  * - caso contrário (DEFEITO) → Float32Array(12) — exatamente os índices 0..11.
- * Índices 0..11 idênticos nos dois casos. O modo de memória do episódio
- * ('sinapses' | 'mapa' | 'ambos') escolhe o withMap correspondente em evolution.mjs.
+ * Índices 0..11 idênticos nos dois casos.
+ * REORIENTAÇÃO v7: os modos com mapa estão EXTINTOS na demo — o episódio usa SEMPRE
+ * os 12 sinais (0..11); `opts.withMap` mantém-se aqui apenas para testes/comparabilidade.
  *
  * Índices 0..11 (inalterados desde E2):
  *  - 0..3  distâncias às paredes, normalizadas por max(cols,rows), clip [0,1];
@@ -27,15 +28,28 @@ export const SENSOR_NAMES = ['parede↑', 'parede↓', 'parede←', 'parede→',
  *  - 8..11 fração de células abertas do raio já visitadas (0 se dist===0 ou visited null).
  *
  * Com `visited === null` o mapa sai todo a 0.0 exceto a posição atual (sempre 1.0).
- * Quente (milhares de chamadas/s): só aloca o Float32Array devolvido (nascido a
- * zeros), escreve o mapa com um passeio linear sobre `visited` e sobrescreve a
- * posição atual — sem closures nem alocações intermédias.
+ * Quente (milhares de chamadas/s): escreve com um passeio linear sobre `visited` e
+ * sobrescreve a posição atual — sem closures nem alocações intermédias.
  */
 export function sense(maze, x, y, visited = null, opts = {}) {
-  const withMap = opts.withMap === true;
+  const withMap = opts && opts.withMap === true;
+  return senseInto(new Float32Array(withMap ? 12 + maze.cols * maze.rows : 12), maze, x, y, visited, opts);
+}
+
+/**
+ * EMENDA v6/E18: `senseInto(out, maze, x, y, visited = null, opts = {})` — EXATAMENTE a
+ * semântica de `sense`, mas escreve num Float32Array PRÉ-ALOCADO (zero alocação por
+ * passo) e devolve `out` (o MESMO objeto — a identidade de referência é preservada).
+ * Requisitos: `out.length >= 12` (sem withMap) ou `>= 12 + cols*rows` (com withMap);
+ * valores fora dessa janela não são tocados. `out` curto lança RangeError.
+ * `sense` delega aqui; o episódio (runEpisode) reutiliza um buffer por episódio.
+ */
+export function senseInto(out, maze, x, y, visited = null, opts = {}) {
+  const withMap = opts && opts.withMap === true;
   const cols = maze.cols;
   const n = cols * maze.rows;
-  const out = new Float32Array(withMap ? 12 + n : 12);
+  const len = withMap ? 12 + n : 12;
+  if (!out || out.length < len) throw new RangeError('senseInto: buffer curto (mínimo ' + len + ')');
   const norm = Math.max(maze.cols, maze.rows);
   for (let d = 0; d < 4; d++) {
     const info = rayInfo(maze, x, y, d);
@@ -60,11 +74,14 @@ export function sense(maze, x, y, visited = null, opts = {}) {
     }
     out[8 + d] = frac;
   }
-  // Mapa E7 (só com opts.withMap): 0.5 nas células com visited[] set (o resto já nasceu
-  // a 0), e a posição atual a 1.0 SEMPRE — mesmo que visited não a marque (ou seja null).
+  // Mapa E7 (só com opts.withMap): 0.5 nas células com visited[] set e a posição atual
+  // a 1.0 SEMPRE — mesmo que visited não a marque (ou seja null). Com buffer reutilizado
+  // (senseInto) as células do mapa são REESCRITAS todas: 0.5/0.0 explícitos, nunca herdados.
   if (withMap) {
     if (visited) {
       for (let i = 0; i < n; i++) out[12 + i] = visited[i] ? 0.5 : 0;
+    } else {
+      for (let i = 0; i < n; i++) out[12 + i] = 0;
     }
     out[12 + y * cols + x] = 1.0;
   }

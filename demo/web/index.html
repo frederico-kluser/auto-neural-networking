@@ -15,10 +15,16 @@
     #goal-banner            (data-state = intro | progress | solved | limit; data-notice = false | true)
     #goal-objective         texto fixo do objetivo (não é preenchido por JS)
     #goal-progress          linha dinâmica: intro ("clica em Treinar e observa a rede evoluir até
-                            vencer") · progresso ("época N · resolvidos X/Y · melhor resultado Z") ·
+                            vencer") · progresso ("época N · resolvidos X/Y · melhor resultado Z ·
+                            a treinar há 12 min" com o tempo decorrido de store.elapsedMs) ·
                             vitória ("desafio vencido em N épocas") · limite (mensagem de limite) ·
                             aviso curto "desafio novo: a contar do zero" (evento 'ann-goal-notice'
                             disparado por ui/controls.js, consumido por ui/stats.js)
+    #goal-curriculum        segunda linha (EMENDA v6/E17; preenchida por ui/stats.js a partir das
+                            chaves level/levelProgress/targetSize do store): "a treinar em 7×7 ·
+                            alvo 31×31 · nível 3/14". O treino começa em 5×5 e sobe de tamanho até
+                            ao alvo quando resolve cada nível. Oculta sem dados e na
+                            introdução/vitória.
 
   Palco (containers vazios; a visualização cria o canvas lá dentro e remove o .viz-placeholder)
     #stage                  contentor do palco
@@ -29,12 +35,19 @@
   Controlos (ordem canónica: botões, tamanho do desafio, velocidade, definições avançadas)
     #btn-train              primário, largura total: "Treinar" (ou "Retomar" quando em pausa)
     #btn-pause  #btn-reset  secundários, lado a lado: "Pausar" · "Recomeçar"
-    #ctrl-maze-size         select 5..31 (ímpares), opções rotuladas com dificuldade, defeito 7×7
-    #hint-maze-size         ajuda do #ctrl-maze-size (aria-describedby)
+    #ctrl-maze-size         select 5..31 (ímpares), opções rotuladas com dificuldade, defeito 7×7.
+                            EMENDA v6/E17: o valor é o TAMANHO ALVO do curriculum (o treino começa
+                            em 5×5 e sobe até este tamanho quando resolve cada nível)
+    #hint-maze-size         ajuda do #ctrl-maze-size (aria-describedby): "o treino começa em 5×5 e
+                            sobe até este tamanho quando resolve cada nível"
     #speed-label            rótulo do grupo de velocidade
     #ctrl-speed             radiogroup: #speed-1 #speed-4 #speed-16 #speed-max (values 1 | 4 | 16 | max)
                             etiquetas lenta / normal / rápida / máxima; defeito RÁPIDA (16)
     #hint-speed             ajuda do grupo de velocidade (aria-describedby)
+    #ctrl-time-limit        input numérico "limite de tempo (minutos)", min 0, defeito 30
+                            (0 = sem limite; store key timeLimitMs em ms). Quando o tempo de
+                            treino acaba o worker envia done com summary.reason 'time'
+    #hint-time-limit        ajuda do #ctrl-time-limit (aria-describedby)
     #advanced-settings      <details> "definições avançadas", fechado por defeito:
       #ctrl-seed              input numérico, etiqueta "labirinto nº" (NUNCA "seed")
       #hint-seed              ajuda do #ctrl-seed
@@ -46,12 +59,16 @@
       #ctrl-auto-rotate       checkbox "rotação automática da câmara", DESLIGADA por defeito
                               (store key autoRotate; liga as vistas 3D)
       #hint-auto-rotate       ajuda do #ctrl-auto-rotate
-      #ctrl-memory-mode       select "memória da rede" (EMENDA v5/E13): opções
-                              sinapses (defeito) | mapa | ambos; store key memoryMode
-      #hint-memory-mode       ajuda do #ctrl-memory-mode (aria-describedby)
+      #memory-explain         linha de explicação da memória (REORIENTAÇÃO: o seletor
+                              "memória da rede: sinapses | mapa | ambos" foi RETIRADO; o worker
+                              usa sempre 12 entradas, modo 'sinapses' fixo; texto: "a memória
+                              constrói-se sozinha na rede: sinapses que se criam e ligam para
+                              guardar as decisões anteriores. O agente não vê o mapa, só 12 sinais.")
     REMOVIDO (UX-REBUILD): o controlo "modo de visualização" e os ids
       #ctrl-view-mode #mode-champion #mode-live #mode-label. A chave do store
       viewMode mantém-se com valor 'live' por compatibilidade.
+    REMOVIDO (REORIENTAÇÃO): o controlo "memória da rede" e os ids
+      #ctrl-memory-mode #hint-memory-mode (substituídos por #memory-explain).
 
   Estatísticas (rótulos em linguagem comum; cada um com linha de ajuda)
     #stats                  faixa de estatísticas
@@ -296,6 +313,7 @@
            aria-label="objetivo e progresso do treino">
     <p class="goal-objective" id="goal-objective">objetivo: treinar a rede até o agente chegar à saída</p>
     <p class="goal-progress" id="goal-progress">clica em Treinar e observa a rede evoluir até vencer</p>
+    <p class="goal-progress goal-curriculum" id="goal-curriculum" hidden></p>
   </section>
 
   <main class="workspace">
@@ -332,7 +350,7 @@
             <option value="29">29×29 extremo</option>
             <option value="31">31×31 extremo</option>
           </select>
-          <span class="hint" id="hint-maze-size">labirintos maiores são mais difíceis e o treino demora mais a vencer</span>
+          <span class="hint" id="hint-maze-size">o treino começa em 5×5 e sobe até este tamanho quando resolve cada nível</span>
         </div>
 
         <div class="field">
@@ -348,6 +366,12 @@
             <label for="speed-max">máxima</label>
           </div>
           <span class="hint" id="hint-speed">quão depressa o treino corre. Não muda o resultado, só o tempo</span>
+        </div>
+
+        <div class="field">
+          <label class="micro-label" for="ctrl-time-limit">limite de tempo (minutos)</label>
+          <input class="num" type="number" id="ctrl-time-limit" name="time-limit" min="0" max="1440" step="1" value="30" inputmode="numeric" aria-describedby="hint-time-limit">
+          <span class="hint" id="hint-time-limit">0 = sem limite. Quando o tempo acaba o treino para e mostra onde ficou</span>
         </div>
 
         <details class="advanced" id="advanced-settings">
@@ -373,13 +397,7 @@
             </div>
 
             <div class="field">
-              <label class="micro-label" for="ctrl-memory-mode">memória da rede</label>
-              <select id="ctrl-memory-mode" name="memory-mode" aria-describedby="hint-memory-mode">
-                <option value="sinapses" selected>sinapses (memória na rede)</option>
-                <option value="mapa">mapa do labirinto (entradas)</option>
-                <option value="ambos">ambos</option>
-              </select>
-              <span class="hint" id="hint-memory-mode">com 'sinapses' a rede aprende memória nos próprios neurónios e joga em labirintos de qualquer tamanho; com 'mapa' cada casa é uma entrada (só labirintos do mesmo tamanho)</span>
+              <span class="hint" id="memory-explain">a memória constrói-se sozinha na rede: sinapses que se criam e ligam para guardar as decisões anteriores. O agente não vê o mapa, só 12 sinais.</span>
             </div>
 
             <div class="field field-check">

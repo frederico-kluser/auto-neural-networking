@@ -21,31 +21,38 @@ export function generateMaze(cols, rows, seed = 1, opts = {}) {
   const C = oddAtLeast5(cols);
   const R = oddAtLeast5(rows);
   const s = Number.isFinite(seed) ? Math.trunc(seed) : 1;
-  const rng = makeRng(s);
+  const mixed = (Math.imul(s ^ 0x9e3779b9, 0x85ebca6b) ^ (s >>> 13) ^ 0x27d4eb2d) >>> 0;
+  const rng = makeRng(mixed || 1);
   const grid = new Uint8Array(C * R).fill(1); // tudo parede
   const at = (x, y) => y * C + x;
-  // DFS iterativo com stack explícita sobre células ímpares (x e y ímpares).
-  const stack = [[1, 1]];
-  grid[at(1, 1)] = 0;
-  while (stack.length > 0) {
-    const [cx, cy] = stack[stack.length - 1];
-    const cand = [];
-    for (let d = 0; d < 4; d++) {
-      const nx = cx + 2 * DIR_VEC[d][0];
-      const ny = cy + 2 * DIR_VEC[d][1];
-      // dentro do interior e ainda não visitada (as não visitadas continuam parede)
-      if (nx > 0 && ny > 0 && nx < C - 1 && ny < R - 1 && grid[at(nx, ny)] === 1) cand.push(d);
+  // Kruskal randomizado sobre as células ímpares: a árvore geradora é amostrada de forma
+  // UNIFORME (o backtracker DFS tinha viés forte: 5x5 só saía em 2 layouts). Union-find com
+  // compressão de caminho; arestas baralhadas com Fisher-Yates determinístico.
+  const cells = [];
+  for (let y = 1; y < R - 1; y += 2) for (let x = 1; x < C - 1; x += 2) cells.push([x, y]);
+  const idOf = new Int32Array(C * R).fill(-1);
+  cells.forEach(([x, y], i) => { idOf[at(x, y)] = i; grid[at(x, y)] = 0; });
+  const parent = new Int32Array(cells.length);
+  for (let i = 0; i < cells.length; i++) parent[i] = i;
+  const find = (a) => { while (parent[a] !== a) { parent[a] = parent[parent[a]]; a = parent[a]; } return a; };
+  const edges = [];
+  for (let i = 0; i < cells.length; i++) {
+    const [x, y] = cells[i];
+    if (idOf[at(x + 2, y)] >= 0) edges.push([i, idOf[at(x + 2, y)], at(x + 1, y)]);
+    if (idOf[at(x, y + 2)] >= 0) edges.push([i, idOf[at(x, y + 2)], at(x, y + 1)]);
+  }
+  for (let i = edges.length - 1; i > 0; i--) {
+    const j = rng.int(i + 1);
+    const t = edges[i]; edges[i] = edges[j]; edges[j] = t;
+  }
+  let merged = 0;
+  for (const [a, b, mid] of edges) {
+    const ra = find(a), rb = find(b);
+    if (ra !== rb) {
+      parent[ra] = rb;
+      grid[mid] = 0; // abre a passagem
+      if (++merged === cells.length - 1) break;
     }
-    if (cand.length === 0) {
-      stack.pop();
-      continue;
-    }
-    const d = cand[rng.int(cand.length)];
-    const nx = cx + 2 * DIR_VEC[d][0];
-    const ny = cy + 2 * DIR_VEC[d][1];
-    grid[at(cx + DIR_VEC[d][0], cy + DIR_VEC[d][1])] = 0; // abre a passagem
-    grid[at(nx, ny)] = 0; // e a célula destino
-    stack.push([nx, ny]);
   }
   return {
     cols: C,

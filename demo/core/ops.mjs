@@ -2,7 +2,19 @@
 // Toda a inicialização preserva a função: ligações novas nascem com peso 0 e o neurónio novo
 // nasce com pesos de SAÍDA 0. Invariante garantida: M === 0 ⇒ W === 0 (idem M_in/M_out),
 // slot 0 sempre vivo e com caminho input→output.
-import { ensureCapacity } from './network.mjs';
+//
+// REORIENTAÇÃO v7 (2026-09-27): as sinapses "surgem e se ligam" para codificar decisões
+// anteriores — addConn/addNeuron/addMemoryNeuron MUDAM a topologia (novas sinapses),
+// perturbWeights ativa pesos nascidos a 0 e as sinapses rápidas (F, network.mjs) tornam
+// qualquer ligação mascarada funcional de imediato, registando a co-ocorrência
+// atividade×decisão. addMemoryNeuron liga-se RECORRENTEMENTE aos neurónios de DECISÃO
+// (unidades que alimentam o readout) nos dois sentidos: recebe a atividade de decisão
+// (d→s) e devolve-a ao sistema de decisão (s→d).
+//
+// EMENDA v6/E16: toda a mutação de máscaras (M/M_in/M_out) invalida o cache de índices
+// mascarados de network.mjs (applyOp chama invalidateMaskCache no fim; ver também
+// clearSlot). O contrato público das ops não muda.
+import { ensureCapacity, invalidateMaskCache } from './network.mjs';
 
 export const OP_NAMES = ['addNeuron', 'addConn', 'removeConn', 'rewire', 'pruneNeuron', 'changeLeak', 'splitNeuron', 'perturbWeights', 'addMemoryNeuron'];
 
@@ -19,6 +31,20 @@ function aliveList(net, exclude = -1) {
 function deadList(net) {
   const out = [];
   for (let j = 0; j < net.nSlots; j++) if (!net.alive[j]) out.push(j);
+  return out;
+}
+
+// v7: unidades de DECISÃO = neurónios vivos que alimentam o readout (alguma
+// M_out[j*nOut+i] === 1) — "o h que alimenta o readout conta como decisão".
+function decisionList(net, exclude = -1) {
+  const out = [];
+  for (let j = 0; j < net.nSlots; j++) {
+    if (!net.alive[j] || j === exclude) continue;
+    const row = j * net.nOut;
+    for (let i = 0; i < net.nOut; i++) {
+      if (net.M_out[row + i]) { out.push(j); break; }
+    }
+  }
   return out;
 }
 
@@ -259,10 +285,18 @@ function perturbWeights(net, rng) {
 
 // EMENDA v5/E12: addMemoryNeuron — neurónio de MEMÓRIA de trabalho (célula com atividade
 // persistente; "novos neurónios para memórias novas", Deng 2010 / Aimone; Butz & van Ooyen 2009).
-// Semântica: EXATAMENTE como addNeuron (1 input→novo U(-s,s) com s por E10; 1 saída pequena
-// U(-0.3,0.3) por E6, para o readout ou para 1 neurónio vivo) MAIS:
+// Semântica: 1 input→novo (U(-s,s) com s por E10) + autoconexão forte + leak baixo:
 //   · autoconexão forte: M[s][s]=1, W[s][s]=0.85;
 //   · leak forçado baixo: alphaJ[s]=0.05 (quase sem vazamento ⇒ atividade persistente).
+// v7 (reorientação): a memória de trabalho liga-se RECORRENTEMENTE aos neurónios de
+// DECISÃO nos dois sentidos —
+//   · saída s→d para uma unidade de decisão (d U(-0.3,0.3), E6): a memória influencia a
+//     decisão (mantém-se exatamente 1 ligação de saída além da autoconexão);
+//   · entrada d'→s a partir de uma unidade de decisão: a célula de memória recebe a
+//     atividade de decisão e a sinapse rápida F sobre ligações a decisões regista o
+//     histórico (cadeia decisão → sinapse → memória).
+// Fallback (só sem unidades de decisão, caso raro — o slot 0 é sempre uma): a saída vai
+// para o readout ou para um neurónio vivo, como na E12 original.
 // Cresce capacidade sozinho (ensureCapacity) como addNeuron.
 function addMemoryNeuron(net, rng) {
   let dead = deadList(net);
@@ -278,7 +312,15 @@ function addMemoryNeuron(net, rng) {
   const k = rndInt(rng, net.nIn);
   net.M_in[k * n + s] = 1;
   net.W_in[k * n + s] = (rng.next() - 0.5) * 2 * Math.min(0.5, 1 / Math.sqrt(net.nIn)); // E10
-  if (rng.next() < 0.5) {
+  const dec = decisionList(net, s); // v7: unidades de decisão (alimentam o readout)
+  if (dec.length) {
+    const j = dec[rndInt(rng, dec.length)];
+    net.M[s * n + j] = 1; // saída recorrente para uma unidade de DECISÃO
+    net.W[s * n + j] = (rng.next() - 0.5) * 0.6; // E6: U(-0.3, 0.3)
+    const src = dec[rndInt(rng, dec.length)];
+    net.M[src * n + s] = 1; // entrada recorrente DE uma unidade de DECISÃO
+    net.W[src * n + s] = (rng.next() - 0.5) * 0.6; // E6: U(-0.3, 0.3)
+  } else if (rng.next() < 0.5) {
     const i = rndInt(rng, net.nOut);
     net.M_out[s * net.nOut + i] = 1;
     net.W_out[s * net.nOut + i] = (rng.next() - 0.5) * 0.6; // E6: U(-0.3, 0.3)
@@ -308,10 +350,19 @@ const OPS = {
 
 // Aplica uma operação; devolve true se aplicada. Nunca destrói o caminho input→output
 // (slot 0 nunca morre nem perde as suas ligações de entrada/saída).
+// E16: SEMPRE que uma op corre (aplicada ou não) o cache de máscaras é invalidado — as
+// ops podem ter tocado em M/M_in/M_out (clearSlot, addConn, rewire, splitNeuron...) e o
+// update de F tem de voltar a iterar exatamente os índices mascarados atuais.
 export function applyOp(net, opName, rng) {
   const op = OPS[opName];
   if (!op) return false;
-  return op(net, rng);
+  let ok = false;
+  try {
+    ok = op(net, rng);
+  } finally {
+    invalidateMaskCache(net);
+  }
+  return ok;
 }
 
 // Banco adaptativo: adaptive pursuit (Thierens 2005). P_min = 0.05, β = 0.3.

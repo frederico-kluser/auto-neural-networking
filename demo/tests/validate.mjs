@@ -397,7 +397,8 @@ check('fitnessOf: fórmula canónica (spot-checks)', () => {
   const unsolved = fitnessOf({ solved: false, steps: 10, maxSteps: 50, startDist: 8, endDist: 4, visited: 12, openCells: 40 });
   const manual = 1.5 + (1 - 20 / 50) + 0.5 * (30 / 40);
   assert.ok(Math.abs(solved - manual) < 1e-9, `solved: esperado ${manual}, obtido ${solved}`);
-  const manualU = (1 - 4 / 8) * 1.0 - 10 * 0.002 + 0.25 * (12 / 40);
+  // E15: progresso por potencial BFS (startDist/endDist são distâncias BFS)
+  const manualU = 2 * (8 - 4) / 8 - 10 * 0.002 + 0.25 * (12 / 40);
   assert.ok(Math.abs(unsolved - manualU) < 1e-9, `unsolved: esperado ${manualU}, obtido ${unsolved}`);
   return 'ok';
 });

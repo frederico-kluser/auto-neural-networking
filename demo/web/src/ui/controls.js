@@ -10,9 +10,10 @@
  *                 quando não existem (nunca lança)
  *
  * EMENDA v5/E14 (treinos guardados):
- *   - "memória da rede" (#ctrl-memory-mode) -> store.memoryMode SEMPRE e
- *     actions.setMemoryMode(mode) quando existe. Modo válido: sinapses | mapa |
- *     ambos (qualquer outro valor cai em 'sinapses').
+ *   - REORIENTAÇÃO: o seletor "memória da rede" (#ctrl-memory-mode) foi RETIRADO
+ *     da UI; o worker usa sempre 12 entradas (modo 'sinapses' fixo) e a chave do
+ *     store memoryMode mantém-se em 'sinapses' por compatibilidade (não é
+ *     escrita aqui). A explicação da memória vive em #memory-explain (index.html).
  *   - "guardar treino atual" (#btn-save-training) -> actions.saveTraining(name)
  *     quando existe. Sem a action, fallback local: guarda em
  *     web/src/training-store.js com a rede que estiver no store (bestNet ||
@@ -42,17 +43,29 @@
  * Ordem do painel (UX-REBUILD §2): botões (Treinar primário + Pausar/Recomeçar),
  * tamanho do desafio, velocidade do treino, definições avançadas (recolhidas).
  *
+ * EMENDA v6/E17 (curriculum): "tamanho do desafio" (#ctrl-maze-size) passa a ser
+ * o TAMANHO ALVO do treino: o worker começa em 5×5 e sobe 5→7→…→mazeSize quando
+ * o campeão resolve cada nível (a ajuda #hint-maze-size, no index.html, explica
+ * isto ao utilizador). A chave do store continua a chamar-se mazeSize e guarda o
+ * alvo; o nível atual do treino vive em store.level/levelProgress (mensagens do
+ * worker, encaminhadas pela integração). Comportamento dos controlos inalterado:
+ * mudar o tamanho durante o treino reinicia o desafio e avisa.
+ *
  * Chaves do store LIDAS:   training, mazeSize, seed, population, generations,
- *                          speed, autoRotate, memoryMode, bestFitness,
+ *                          speed, autoRotate, memoryMode, bestFitness, timeLimitMs,
  *                          savedTrainings, selectedTrainingIds
  * Chaves do store ESCRITAS: mazeSize, seed, population, generations, speed,
- *                          autoRotate, memoryMode, savedTrainings,
+ *                          autoRotate, timeLimitMs, savedTrainings,
  *                          selectedTrainingIds, playbackSource
  *   - population/generations não têm action no contrato: ficam só no store.
  *   - autoRotate: #ctrl-auto-rotate -> store.autoRotate + actions.setAutoRotate(bool)
  *     no change (a action é ignorada em silêncio se não existir).
  *   - generations = "limite de épocas": inteiro >= 0; vazio/NaN -> 0.
  *     0 = treinar até vencer; n > 0 = teto opcional.
+ *   - timeLimitMs = "limite de tempo (minutos)" convertido para ms (0 = sem
+ *     limite; defeito 30 min). Sem action no contrato (como population/
+ *     generations): fica só no store, a integração passa-o ao worker e não
+ *     reinicia o desafio.
  *   - speed guarda o valor do radiogroup (1 | 4 | 16 | 'max');
  *     actions.setSpeed recebe o tamanho de lote em épocas: 1 | 4 | 16 e 'max' -> 50.
  *     Depois de chamar a action, o store volta a ficar com o valor canónico
@@ -76,6 +89,9 @@ const SPEED_IDS = { '1': 'speed-1', '4': 'speed-4', '16': 'speed-16', 'max': 'sp
 const NOTICE_EVENT = 'ann-goal-notice';
 const NOTICE_TEXT = 'desafio novo: a contar do zero';
 const NOTICE_MS = 5000;
+// "limite de tempo (minutos)": 0 = sem limite; defeito 30 min (store em ms)
+const DEFAULT_TIME_LIMIT_MIN = 30;
+const TIME_LIMIT_MAX_MIN = 1440;
 
 /** Inteiro com clamping; valores não finitos caem no fallback (nunca propaga NaN). */
 function clampInt(raw, min, max, fallback) {
@@ -163,8 +179,8 @@ export function mountControls(store, actions = {}) {
   const inSeed = $('ctrl-seed');
   const inPop = $('ctrl-population');
   const inGens = $('ctrl-generations');
+  const inTimeLimit = $('ctrl-time-limit'); // "limite de tempo (minutos)" (0 = sem limite)
   const chkAutoRotate = $('ctrl-auto-rotate');
-  const selMemory = $('ctrl-memory-mode');
   const inName = $('training-name');
   const btnSave = $('btn-save-training');
   const savedList = $('saved-list');
@@ -237,11 +253,28 @@ export function mountControls(store, actions = {}) {
     }
   }
 
-  function applyMemoryMode(raw) {
-    const v = MEMORY_MODES.indexOf(String(raw)) >= 0 ? String(raw) : 'sinapses';
-    if (selMemory && selMemory.value !== v) selMemory.value = v;
-    if (store.get().memoryMode !== v) store.set({ memoryMode: v });
-    act('setMemoryMode', v); // ignorado em silêncio se a action não existir
+  /** Minutos do input -> ms para o store (0 = sem limite); inteiro em [0, 1440]. */
+  function minutesToMs(raw) {
+    return clampInt(raw, 0, TIME_LIMIT_MAX_MIN, DEFAULT_TIME_LIMIT_MIN) * 60000;
+  }
+
+  /** ms do store -> minutos do input (0 = sem limite; não finito = defeito). */
+  function msToMinutes(ms) {
+    const v = Number(ms);
+    if (!Number.isFinite(v)) return DEFAULT_TIME_LIMIT_MIN;
+    return v > 0 ? clampInt(Math.round(v / 60000), 1, TIME_LIMIT_MAX_MIN, DEFAULT_TIME_LIMIT_MIN) : 0;
+  }
+
+  /**
+   * "limite de tempo (minutos)" -> store.timeLimitMs (ms; 0 = sem limite).
+   * Sem action no contrato (como population/generations): fica só no store e a
+   * integração passa-o ao worker (config.timeLimitMs). Não reinicia o desafio.
+   */
+  function applyTimeLimit(raw) {
+    const ms = minutesToMs(raw);
+    const mins = String(msToMinutes(ms));
+    if (inTimeLimit && inTimeLimit.value !== mins) inTimeLimit.value = mins;
+    if (store.get().timeLimitMs !== ms) store.set({ timeLimitMs: ms });
   }
 
   function onSaveTraining() {
@@ -440,7 +473,7 @@ export function mountControls(store, actions = {}) {
     });
   }
   on(chkAutoRotate, 'change', () => applyAutoRotate(!!(chkAutoRotate && chkAutoRotate.checked)));
-  on(selMemory, 'change', () => applyMemoryMode(selMemory ? selMemory.value : 'sinapses'));
+  on(inTimeLimit, 'change', () => applyTimeLimit(inTimeLimit ? inTimeLimit.value : DEFAULT_TIME_LIMIT_MIN));
   on(btnTrain, 'click', () => act('train'));
   on(btnPause, 'click', () => act('pause'));
   on(btnReset, 'click', () => act('reset'));
@@ -499,12 +532,11 @@ export function mountControls(store, actions = {}) {
     chkAutoRotate.checked = v;
     if (s0.autoRotate !== v) patch.autoRotate = v;
   }
-  if (selMemory) {
-    // 'sinapses' por defeito (E13); store primeiro, DOM como reserva
-    const domVal = MEMORY_MODES.indexOf(selMemory.value) >= 0 ? selMemory.value : 'sinapses';
-    const v = MEMORY_MODES.indexOf(String(s0.memoryMode)) >= 0 ? String(s0.memoryMode) : domVal;
-    selMemory.value = v;
-    if (s0.memoryMode !== v) patch.memoryMode = v;
+  if (inTimeLimit) {
+    // "limite de tempo (minutos)": 0 = sem limite; store (ms) primeiro, DOM reserva
+    const v = clampInt(pick(inTimeLimit.value, msToMinutes(s0.timeLimitMs), 0, TIME_LIMIT_MAX_MIN, DEFAULT_TIME_LIMIT_MIN), 0, TIME_LIMIT_MAX_MIN, DEFAULT_TIME_LIMIT_MIN);
+    inTimeLimit.value = String(v);
+    if (Number(s0.timeLimitMs) !== v * 60000) patch.timeLimitMs = v * 60000;
   }
   if (inName) {
     // nome por defeito "7×7 · labirinto 3 · 2,71" (forçado no arranque)
@@ -547,9 +579,8 @@ export function mountControls(store, actions = {}) {
     if (chkAutoRotate && typeof s.autoRotate === 'boolean' && chkAutoRotate.checked !== s.autoRotate) {
       chkAutoRotate.checked = s.autoRotate;
     }
-    if (selMemory && s.memoryMode != null) {
-      const v = MEMORY_MODES.indexOf(String(s.memoryMode)) >= 0 ? String(s.memoryMode) : 'sinapses';
-      if (selMemory.value !== v) selMemory.value = v;
+    if (inTimeLimit && s.timeLimitMs != null) {
+      syncInput(inTimeLimit, String(msToMinutes(s.timeLimitMs)));
     }
     syncNameDefault(); // nome por defeito enquanto o utilizador não escreve
   });
